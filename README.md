@@ -25,7 +25,7 @@ dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/rele
 装好后重启 DSH，在 **设置 → 应用更新** 使用。桌面端（Electron 托管的 `desktop` profile）不允许
 `dsh plugin` 直接改写，需在 profile 的 `node_modules` 下建 junction 并手动补 `bundles`。
 
-![version](https://img.shields.io/badge/version-1.0.0-4b6fff?style=flat-square)
+[![npm](https://img.shields.io/npm/v/dsh-app-updater?style=flat-square&label=npm&color=0891b2&logo=npm)](https://www.npmjs.com/package/dsh-app-updater)
 ![license](https://img.shields.io/badge/license-MIT-2f6f4f?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows-7da1de?style=flat-square)
 ![dsh-plugin](https://img.shields.io/badge/DSH-plugin-263146?style=flat-square)

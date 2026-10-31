@@ -1,7 +1,7 @@
 # dsh-app-updater — App Updater for DeepSeek Harness
 
 **English** | [简体中文](README.md)
-![version](https://img.shields.io/badge/version-1.0.0-4b6fff?style=flat-square)
+[![npm](https://img.shields.io/npm/v/dsh-app-updater?style=flat-square&label=npm&color=0891b2&logo=npm)](https://www.npmjs.com/package/dsh-app-updater)
 ![license](https://img.shields.io/badge/license-MIT-2f6f4f?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows-7da1de?style=flat-square)
 ![dsh-plugin](https://img.shields.io/badge/DSH-plugin-263146?style=flat-square)
