@@ -13,6 +13,9 @@
 dsh plugin --profile web add dsh-app-updater
 ```
 
+> 刚发布的新版本可能被 pnpm 的 `minimumReleaseAge` 策略暂缓一段时间；想立刻装到指定版本就显式写版本号：
+> `dsh plugin --profile web add dsh-app-updater@1.2.0`（细节见 [RELEASING.md](RELEASING.md)）。
+
 不想走 npm，也可以用源码或发行包：
 
 ```bash

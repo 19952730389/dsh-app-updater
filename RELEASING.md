@@ -56,6 +56,19 @@ gh release create v<version> dsh-app-updater.tgz \
   - dshopen.org → https://github.com/polang233/dsh-plugin-index/issues/new?template=plugin-add.yml
   - awesome-dsh-plugin → 向仓库提 PR，新增 `data/plugins/<owner>__<repo>.yml`（见其 contributing.md）
 
+### 刚发版时别人可能装到旧版本
+
+pnpm 默认有 `minimumReleaseAge`（新发布的包先观察一段时间才参与解析）。profile 里若没写
+`minimumReleaseAge: 0`，`dsh plugin add <包名>` 在发版后的一段时间内可能仍解析到上一个版本：
+
+```bash
+# 立刻拿到刚发布的版本：显式指定版本号
+dsh plugin --profile web add dsh-app-updater@<version>
+```
+
+这不是包的问题，是消费端的供应链策略；等宽限期过去后不带版本号也会解析到新版。
+（排查时看 profile 的 `pnpm-workspace.yaml`：`minimumReleaseAge` 与 `minimumReleaseAgeExclude`。）
+
 ## 6. 本地开发时的桌面端安装
 
 Electron 托管的 `desktop` profile 不接受 `dsh plugin` 写入。做法是在
