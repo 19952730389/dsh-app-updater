@@ -16,13 +16,17 @@ Where to find it: DeepSeek Harness → Settings → **应用更新 (App Updater)
 ## Install
 
 ```bash
-# straight from the source repository
-dsh plugin --profile web add github:19952730389/dsh-app-updater
+# npm package (recommended; also one-click installable from the plugin center)
+dsh plugin --profile web add dsh-app-updater
 ```
 
-Prebuilt `.tgz` (see [Releases](https://github.com/19952730389/dsh-app-updater/releases)):
+Without npm, install from source or from the prebuilt tarball:
 
 ```bash
+# source repository
+dsh plugin --profile web add github:19952730389/dsh-app-updater
+
+# prebuilt tgz (see Releases)
 dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/releases/latest/download/dsh-app-updater.tgz
 ```
 

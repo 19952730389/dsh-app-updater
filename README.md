@@ -8,13 +8,17 @@
 ## 安装
 
 ```bash
-# 从源码仓库安装（复制即可）
-dsh plugin --profile web add github:19952730389/dsh-app-updater
+# npm 包（推荐，插件中心同样可一键安装）
+dsh plugin --profile web add dsh-app-updater
 ```
 
-发行 `.tgz` 见 [Releases](https://github.com/19952730389/dsh-app-updater/releases)：
+不想走 npm，也可以用源码或发行包：
 
 ```bash
+# 源码仓库
+dsh plugin --profile web add github:19952730389/dsh-app-updater
+
+# 预构建 tgz（见 Releases）
 dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/releases/latest/download/dsh-app-updater.tgz
 ```
 
