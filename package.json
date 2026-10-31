@@ -21,7 +21,8 @@
     "README.en.md",
     "CHANGELOG.md",
     "LICENSE",
-    "CONTRACT.md"
+    "CONTRACT.md",
+    "RELEASING.md"
   ],
   "repository": {
     "type": "git",
