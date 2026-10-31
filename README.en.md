@@ -13,6 +13,23 @@ installing it silently. **The detected applications are never launched.**
 
 Where to find it: DeepSeek Harness → Settings → **应用更新 (App Updater)**
 
+## Install
+
+```bash
+# straight from the source repository
+dsh plugin --profile web add github:19952730389/dsh-app-updater
+```
+
+Prebuilt `.tgz` (see [Releases](https://github.com/19952730389/dsh-app-updater/releases)):
+
+```bash
+dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/releases/latest/download/dsh-app-updater.tgz
+```
+
+Restart DSH afterwards; the plugin lives at **Settings → 应用更新**. The Electron-managed
+`desktop` profile does not accept `dsh plugin` writes, so link the package into that
+profile's `node_modules` and add it to `dsh.profile.bundles` manually.
+
 ---
 
 ## What it actually does
@@ -114,7 +131,7 @@ curl -X POST -H "Content-Type: application/json" \
 | POST | `/dsh-app-updater/settings` | `{confirm:true, settings:{...}}` |
 | POST | `/dsh-app-updater/open-downloads` | `{confirm:true}` open the download folder |
 
-## Install
+## Install (from a checkout)
 
 ```bash
 # from a local checkout

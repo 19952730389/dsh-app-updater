@@ -5,6 +5,22 @@
 
 入口：DeepSeek Harness → 设置 → **应用更新**
 
+## 安装
+
+```bash
+# 从源码仓库安装（复制即可）
+dsh plugin --profile web add github:19952730389/dsh-app-updater
+```
+
+发行 `.tgz` 见 [Releases](https://github.com/19952730389/dsh-app-updater/releases)：
+
+```bash
+dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/releases/latest/download/dsh-app-updater.tgz
+```
+
+装好后重启 DSH，在 **设置 → 应用更新** 使用。桌面端（Electron 托管的 `desktop` profile）不允许
+`dsh plugin` 直接改写，需在 profile 的 `node_modules` 下建 junction 并手动补 `bundles`。
+
 ![version](https://img.shields.io/badge/version-1.0.0-4b6fff?style=flat-square)
 ![license](https://img.shields.io/badge/license-MIT-2f6f4f?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows-7da1de?style=flat-square)
@@ -118,7 +134,7 @@ curl -X POST -H "Content-Type: application/json" \
 | POST | `/dsh-app-updater/settings` | `{confirm:true, settings:{...}}` |
 | POST | `/dsh-app-updater/open-downloads` | `{confirm:true}` 打开下载目录 |
 
-## 安装
+## 安装（开发）
 
 ```bash
 # 本地目录安装
