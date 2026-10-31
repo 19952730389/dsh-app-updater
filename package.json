@@ -1,0 +1,67 @@
+{
+  "name": "dsh-app-updater",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "App Updater for DeepSeek Harness: detect every installed Windows app that has a newer version and update it with one click by downloading the vendor's full installer from its official website and installing it silently — without launching the app. · 检测本机所有已安装 Windows 应用是否有新版本，并从各自官网下载全量安装包一键静默更新（不需要打开被检测的软件）。",
+  "license": "MIT",
+  "icon": "./icon.svg",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "test",
+    "cordis.patch.yml",
+    "icon.svg",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "CONTRACT.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/19952730389/dsh-app-updater.git"
+  },
+  "homepage": "https://github.com/19952730389/dsh-app-updater",
+  "bugs": {
+    "url": "https://github.com/19952730389/dsh-app-updater/issues"
+  },
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0",
+    "dsh": ">=0.1.5-rc.1 <0.2.0-0 || >=0.2.0-rc.2 <0.3.0-0"
+  },
+  "scripts": {
+    "test": "node test/unit.mjs && node test/render.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "dsh-plugin",
+    "cordis",
+    "windows",
+    "winget",
+    "updater",
+    "app-update",
+    "installer",
+    "silent-install"
+  ],
+  "author": "19952730389"
+}

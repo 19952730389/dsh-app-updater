@@ -1,0 +1,18 @@
+Name                                                               Id                                 Version       Available     Source
+----------------------------------------------------------------------------------------------------------------------------------------
+App Installer                                                      Microsoft.AppInstaller             1.29.379.0    1.29.380      winget
+Git                                                                Git.Git                            2.55.0.5      2.56.0.3      winget
+Google Chrome                                                      Google.Chrome                      155.0.8059.85 156.0.8078.48 winget
+HuyaClient                                                         Huya.Huya                          Unknown       7.5.0.0       winget
+Logitech G HUB                                                     Logitech.GHUB                      2026.6.981214 2026.7.992920 winget
+Microsoft Edge                                                     Microsoft.Edge                     156.0.4314.50 156.0.4314.56 winget
+Microsoft Visual C++ 2015-2022 Redistributable (x86) - 14.44.35211 Microsoft.VCRedist.2015+.x86       14.44.35211.0 14.51.36247.0 winget
+Microsoft Windows Desktop Runtime 10.0.13 (x64)                    Microsoft.DotNet.DesktopRuntime.10 10.0.13       10.0.14       winget
+Node.js                                                            OpenJS.NodeJS.LTS                  24.22.0       26.13.0       winget
+TeamViewer                                                         TeamViewer.TeamViewer              15.82.6.0     15.83.3       winget
+UU远程                                                             NetEase.UURemote                   4.43.1.3614   4.45.0.4318   winget
+Windows 终端                                                       Microsoft.WindowsTerminal          1.24.12741.0  1.25.2733.0   winget
+企业微信                                                           Tencent.WeCom                      5.0.12.6018   5.0.13.6005   winget
+哔哩哔哩                                                           Bilibili.Bilibili                  1.19.0        1.20.0        winget
+微信                                                               Tencent.WeChat.Universal           4.1.15.56     4.2.0.9       winget
+15 upgrades available.

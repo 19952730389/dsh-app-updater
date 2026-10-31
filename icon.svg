@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="DSH 应用更新">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5b9bff"/>
+      <stop offset="1" stop-color="#2f6f4f"/>
+    </linearGradient>
+    <linearGradient id="win" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbe7ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="4" y="4" width="120" height="120" rx="28" fill="url(#bg)"/>
+
+  <!-- 应用窗口 -->
+  <rect x="26" y="30" width="76" height="58" rx="10" fill="url(#win)"/>
+  <rect x="26" y="30" width="76" height="16" rx="10" fill="#1f2937" opacity="0.82"/>
+  <circle cx="36" cy="38" r="3.2" fill="#f87171"/>
+  <circle cx="46" cy="38" r="3.2" fill="#fbbf24"/>
+  <circle cx="56" cy="38" r="3.2" fill="#34d399"/>
+  <rect x="36" y="54" width="34" height="5" rx="2.5" fill="#2f4f7a" opacity="0.55"/>
+  <rect x="36" y="64" width="48" height="5" rx="2.5" fill="#2f4f7a" opacity="0.3"/>
+  <rect x="36" y="74" width="26" height="5" rx="2.5" fill="#2f4f7a" opacity="0.3"/>
+
+  <!-- 下载箭头 -->
+  <path d="M64 60 L64 92" stroke="#ffffff" stroke-width="9" stroke-linecap="round"/>
+  <path d="M48 80 L64 96 L80 80" fill="none" stroke="#ffffff" stroke-width="9" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="42" y="100" width="44" height="8" rx="4" fill="#ffffff" opacity="0.9"/>
+
+  <!-- 环形更新标记 -->
+  <path d="M92 44 A30 30 0 0 1 92 84" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" opacity="0.85"/>
+  <path d="M88 78 L96 86 L88 92" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round" opacity="0.85"/>
+</svg>
