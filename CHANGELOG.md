@@ -2,6 +2,32 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.2.0] — 2026-10-31
+
+### 新增
+
+- **运行环境识别**（`lib/platform.js`）：识别 Windows / macOS / 其它系统、具体版本与名称
+  （`Windows 11（build 26300）`、`macOS 15（Sequoia）`）、CPU 架构（ARM64 / x64 / Intel / x86），
+  并记录 CPU 型号与线程数。Windows on ARM 上跑 x64 的 Node 时，靠 `PROCESSOR_ARCHITEW6432`
+  仍能还原出真实架构，而不是被骗成 x64。
+- **按架构挑选安装包**：Windows 侧把识别到的架构传给 winget 的 `--architecture`，让「官网全量包」
+  与当前系统/芯片匹配；清单里没有该架构的安装包时自动退回自动匹配，并在日志里说明。
+  macOS 侧由 Homebrew 按本机架构取对应 cask。新增开关「按本机架构安装包」（默认开启）。
+- **macOS 更新引擎（Homebrew cask）**：用 `brew list --cask --versions` 拿已装版本、
+  `brew outdated --json=v2 --cask --greedy` 拿可升级版本，`brew upgrade --cask <token>` 更新；
+  演练模式改用 `brew fetch --cask <token>`，只下载安装包不安装。没有 Homebrew 时明确报告
+  「不可用」，而不是假装能更新。
+- **界面**：状态行与设置面板新增「运行环境」（系统 · 架构 · 引擎）；引擎不可用时红字给出原因；
+  应用来源新增 `homebrew` 徽章。
+- `/health.json` 增加 `version` / `env` / `envSummary` / `engine` / `capabilities`；
+  `state.json` 同步带出这些字段。
+
+### 说明
+
+- macOS 路径无法在开发机（Windows）上真机验证，因此识别与 Homebrew 输出解析均以注入式单测覆盖
+  （`test/unit.mjs` 共 66 项），安装/更新命令按 Homebrew 官方 CLI 行为编写。
+- 扫描/更新接口按平台放行：Windows 与 macOS 通过，其它系统返回 400 并说明原因。
+
 ## [1.0.0] — 2026-10-31
 
 首个可用版本。

@@ -1,0 +1,8 @@
+名称           ID               版本          可用          源
+------------------------------------------------------------------
+Git            Git.Git          2.56.0.3      2.56.0.4      winget
+HuyaClient     Huya.Huya        Unknown       7.5.0.0       winget
+Logitech G HUB Logitech.GHUB    2026.6.981214 2026.7.992920 winget
+Microsoft Edge Microsoft.Edge   156.0.4314.50 156.0.4314.58 winget
+UU远程         NetEase.UURemote 4.45.0.4318   4.45.1.4372   winget
+5 升级可用。

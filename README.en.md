@@ -7,9 +7,11 @@
 ![dsh-plugin](https://img.shields.io/badge/DSH-plugin-263146?style=flat-square)
 
 
-Detect every installed Windows application that has a newer version, then update them
+Detect every installed application that has a newer version, then update them
 with one click — downloading the **full installer from each vendor's own website** and
 installing it silently. **The detected applications are never launched.**
+Windows (winget) and macOS (Homebrew), architecture-aware: ARM64 and x64/Intel installers are
+chosen to match the machine.
 
 Where to find it: DeepSeek Harness → Settings → **应用更新 (App Updater)**
 
@@ -92,6 +94,7 @@ State file: `%USERPROFILE%\.dsh\dsh-app-updater\state.json`
 | `keepInstallers` | `true` | Keep the installer after a successful update. |
 | `hashFallbackUpgrade` | `true` | Fall back to `winget upgrade` when the download fails. |
 | `dryRun` | `false` | **Rehearsal mode**: download the vendor's full installer but never install it. |
+| `matchSystemArch` | `true` | Match the installer to the detected system and CPU architecture (Windows passes `--architecture`; macOS is resolved by Homebrew). |
 
 Everything above is editable from the plugin's own settings panel inside the settings page.
 The panel also accepts API calls:
@@ -117,10 +120,33 @@ curl -X POST -H "Content-Type: application/json" \
 
 ## Requirements
 
-- **Windows** with `winget.exe` (Microsoft App Installer). Without winget the plugin can still
+- **Windows**: `winget.exe` (Microsoft App Installer). Without winget the plugin can still
   list registry apps, but cannot tell whether they are up to date.
+- **macOS**: `brew` ([Homebrew](https://brew.sh)). Without Homebrew the plugin reports the engine
+  as unavailable instead of pretending it can update anything.
 - No third-party npm dependencies: the host half uses Node built-ins only, the browser half
   only the host-provided `react`.
+
+## Supported systems and architectures
+
+The plugin detects its own environment at startup and picks the installer that matches it:
+
+| System | Architecture | Engine | Notes |
+|---|---|---|---|
+| Windows 10 / 11 | x64 / ARM64 / x86 | **winget** | the detected architecture is passed as `winget --architecture`; if the manifest has no installer for it, the plugin falls back to automatic matching and says so in the log |
+| macOS 11+ | Apple Silicon / Intel | **Homebrew casks** | Homebrew itself resolves the right cask for the machine; without Homebrew the engine is reported unavailable |
+| anything else | — | none | the scan/update routes answer 400 with the reason |
+
+The result is shown in the status line and in the settings panel's “运行环境 / Environment” row, e.g.
+`Windows 11（build 26300） · x64（AMD64） · winget 1.29.380` or
+`macOS 15（Sequoia） · Apple Silicon（ARM64） · Homebrew 4.5.0`.
+
+The “按本机架构安装包 / match system architecture” switch (on by default) can be turned off to hand
+the choice back to winget; Homebrew always resolves for the local architecture.
+
+> The macOS/Homebrew path follows Homebrew's documented CLI behaviour and its detection and parsing
+> logic are covered by unit tests, but it has not been verified on a real Mac — this plugin is
+> developed on Windows. Please open an issue if something misbehaves there.
 
 ## HTTP API (host half)
 
@@ -128,7 +154,7 @@ curl -X POST -H "Content-Type: application/json" \
 |---|---|---|
 | GET | `/dsh-app-updater/state.json` | Status, inventory, log, settings |
 | GET | `/dsh-app-updater/apps.json` | Inventory and statistics only |
-| GET | `/dsh-app-updater/health.json` | Self-check (route count, data directory) |
+| GET | `/dsh-app-updater/health.json` | Self-check: version, environment, engine, capabilities, route count, data directory |
 | POST | `/dsh-app-updater/scan` | `{confirm:true, force:true}` start scanning |
 | POST | `/dsh-app-updater/update` | `{confirm:true, ids:[...]}` start the update queue |
 | POST | `/dsh-app-updater/cancel` | `{confirm:true}` cancel items not yet started |
@@ -157,7 +183,7 @@ Then add `dsh-app-updater` to `dsh.profile.bundles` in the profile's `package.js
 ## Tests
 
 ```bash
-node test/unit.mjs     # 36 checks: table parsing, version compare, manifest & switch parsing
+node test/unit.mjs     # 66 checks: table parsing, version compare, manifest & switches, OS/arch detection, Homebrew parsing
 node test/render.mjs   # 32 checks: settings panel, rehearsal banner, column drag, request bodies
 node test/harness.mjs --scan   # boots the host half against a fake cordis ctx + real HTTP
 ```

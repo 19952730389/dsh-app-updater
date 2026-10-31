@@ -18,7 +18,22 @@ import {
   sliceByWidth,
 } from "../lib/winget.js";
 import { compareVersions, isNewer, looksLikeVersion, splitVersion } from "../lib/version.js";
-import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs } from "../lib/engine.js";
+import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs, parseBrewCaskVersions, parseBrewOutdated, findBrew } from "../lib/engine.js";
+import {
+  detectEnvironment,
+  describeEnvironment,
+  windowsName,
+  macOSName,
+  normalizeArch,
+  archLabel,
+  wingetArch,
+  platformFamily,
+  engineFor,
+  capabilitiesFor,
+  ENGINE_WINGET,
+  ENGINE_BREW,
+  ENGINE_NONE,
+} from "../lib/platform.js";
 import { normalizeName } from "../lib/registry.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -150,6 +165,84 @@ ok(
 group("跨源名称匹配");
 ok(normalizeName("CPUID CPU-Z 3.01") === normalizeName("CPUID CPU-Z"), "去掉尾部版本号后同名");
 ok(normalizeName("Microsoft Edge") !== normalizeName("Google Chrome"), "不同软件不误配");
+
+/* ---------------- 本地化输出（健康检查） ---------------- */
+group("本地化 winget 输出解析（中文界面）");
+const zhListRaw = readFileSync(join(here, "fixture-winget-list-zh.txt"), "utf8");
+const zhUpRaw = readFileSync(join(here, "fixture-winget-upgrade-zh.txt"), "utf8");
+const zhInstalled = parseInstalledList(zhListRaw);
+const zhUpgradable = parseUpgradeList(zhUpRaw);
+ok(zhInstalled.length > 50, "中文表头（名称/ID/版本/可用/源）仍能解析出应用", zhInstalled.length);
+ok(zhUpgradable.length >= 1, "中文表头下仍能解析出可更新项", zhUpgradable.length);
+ok(
+  zhInstalled.length >= installed.length - 5 && zhInstalled.some((r) => r.id === "Git.Git") && installed.some((r) => r.id === "Git.Git"),
+  "中英文两次输出规模相当且都能认出同一批关键应用",
+  [installed.length, zhInstalled.length]
+);
+const zhGit = zhInstalled.find((r) => r.id === "Git.Git");
+ok(zhGit && zhGit.version && !zhGit.name.includes("名称"), "中文行未把表头当数据", zhGit);
+ok(
+  zhInstalled.some((r) => r.id.startsWith("ARP\\") && /\s/.test(r.id)),
+  "ARP 且显示名带空格的行仍保留"
+);
+ok(
+  zhInstalled.every((r) => looksLikeVersion(r.version) || /^(unknown|未知)$/i.test(r.version)),
+  "所有数据行的版本列都像版本号（提示行被剔除）"
+);
+
+/* ---------------- 运行环境识别 ---------------- */
+group("系统与架构识别");
+ok(windowsName("10.0.26300", "26300") === "Windows 11", "build 26300 → Windows 11", windowsName("10.0.26300", "26300"));
+ok(windowsName("10.0.19045", "19045") === "Windows 10", "build 19045 → Windows 10", windowsName("10.0.19045", "19045"));
+ok(macOSName(24).version === "15" && macOSName(24).name.includes("Sequoia"), "Darwin 24 → macOS 15 Sequoia", macOSName(24));
+ok(macOSName(23).version === "14", "Darwin 23 → macOS 14", macOSName(23));
+ok(macOSName(99).name.includes("Darwin 99"), "未来版本不崩且如实标注", macOSName(99).name);
+
+ok(
+  normalizeArch("win32", "x64", { PROCESSOR_ARCHITECTURE: "AMD64", PROCESSOR_ARCHITEW6432: "ARM64" }) === "arm64",
+  "Windows on ARM 上跑 x64 Node 也能识别出 ARM64"
+);
+ok(normalizeArch("win32", "x64", { PROCESSOR_ARCHITECTURE: "AMD64" }) === "x64", "普通 x64 机器识别为 x64");
+ok(normalizeArch("darwin", "arm64", {}) === "arm64", "Apple Silicon 识别为 arm64");
+ok(normalizeArch("darwin", "x64", {}) === "x64", "Intel Mac 识别为 x64");
+ok(archLabel("darwin", "arm64") === "Apple Silicon（ARM64）", "Apple Silicon 标签", archLabel("darwin", "arm64"));
+ok(archLabel("win32", "x64").includes("x64"), "x64 标签", archLabel("win32", "x64"));
+ok(wingetArch("arm64") === "arm64" && wingetArch("x64") === "x64" && wingetArch("unknown") === "", "winget 架构取值映射");
+
+ok(platformFamily("win32") === "windows" && platformFamily("darwin") === "macos" && platformFamily("linux") === "other", "平台族归类");
+ok(engineFor("windows") === ENGINE_WINGET, "Windows → winget", engineFor("windows"));
+ok(engineFor("macos") === ENGINE_BREW, "macOS → Homebrew", engineFor("macos"));
+ok(engineFor("other") === ENGINE_NONE, "其它系统 → 无引擎", engineFor("other"));
+
+const envWinArm = detectEnvironment({
+  platform: "win32",
+  arch: "x64",
+  release: "10.0.26100",
+  env: { PROCESSOR_ARCHITECTURE: "AMD64", PROCESSOR_ARCHITEW6432: "ARM64" },
+  cpus: [{ model: "Snapdragon X Elite" }],
+});
+ok(envWinArm.family === "windows" && envWinArm.arch === "arm64" && envWinArm.wingetArch === "arm64", "注入式环境识别（Windows ARM64）", envWinArm.arch);
+ok(envWinArm.osName === "Windows 11" && envWinArm.osBuild === "26100", "Windows 版本名与 build", [envWinArm.osName, envWinArm.osBuild]);
+ok(describeEnvironment(envWinArm).includes("Windows 11") && describeEnvironment(envWinArm).includes("ARM64"), "环境摘要包含系统与架构", describeEnvironment(envWinArm));
+
+const envMac = detectEnvironment({ platform: "darwin", arch: "arm64", release: "24.1.0", env: {}, cpus: [{ model: "Apple M4" }] });
+ok(envMac.family === "macos" && envMac.osName.includes("Sequoia") && envMac.arch === "arm64", "注入式环境识别（macOS Apple Silicon）", envMac.osName);
+
+ok(capabilitiesFor(envWinArm, false).scan === true, "有 winget 时 Windows 可扫描");
+ok(capabilitiesFor(envWinArm, false).note.includes("winget"), "缺 winget 时给出提示", capabilitiesFor(envWinArm, false).note);
+ok(capabilitiesFor(envMac, false).scan === false, "macOS 缺 Homebrew 时不可扫描");
+ok(capabilitiesFor(envMac, true).scan === true, "macOS 有 Homebrew 时可扫描");
+ok(capabilitiesFor({ family: "other" }, false).scan === false, "其它系统不可扫描");
+
+/* ---------------- Homebrew 解析 ---------------- */
+group("Homebrew 输出解析");
+const versions = parseBrewCaskVersions("visual-studio-code 1.94.0\ngoogle-chrome 131.0.6778.86\n\nbad\n");
+ok(versions.get("visual-studio-code") === "1.94.0" && versions.get("google-chrome") === "131.0.6778.86", "解析已装 cask 版本", [...versions]);
+ok(versions.size === 2, "无版本的行被忽略", versions.size);
+const outdated = parseBrewOutdated(JSON.stringify({ casks: [{ name: "visual-studio-code", current_version: "1.95.0" }, { name: "iterm2", current_version: "3.5.10" }] }));
+ok(outdated.get("visual-studio-code") === "1.95.0" && outdated.get("iterm2") === "3.5.10", "解析可升级 cask", [...outdated]);
+ok(parseBrewOutdated("not json").size === 0, "坏 JSON 不抛错");
+ok(findBrew({ HOMEBREW_PREFIX: "/nonexistent-prefix-for-test" }) === null, "找不到 brew 时返回 null");
 
 /* ---------------- 结果 ---------------- */
 console.log(`\n${failures === 0 ? "全部通过" : "存在失败"}：${checks - failures}/${checks}`);

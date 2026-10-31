@@ -10,7 +10,8 @@ dsh-app-updater/
 ├─ cordis.patch.yml      # insert 行：id=dsh-app-updater, name=dsh-app-updater
 ├─ lib/
 │  ├─ index.js           # 宿主半身：cordis 插件，注册 /dsh-app-updater/* 路由
-│  ├─ engine.js          # 扫描 / 下载 / 安装编排
+│  ├─ platform.js        # 运行环境识别：Windows / macOS、版本、CPU 架构、引擎选择
+│  ├─ engine.js          # 扫描 / 下载 / 安装编排（Windows=winget / macOS=Homebrew）
 │  ├─ winget.js          # winget 定位、调用、表格解析
 │  ├─ registry.js        # 注册表 Uninstall 键枚举（覆盖 winget 未收录的应用）
 │  ├─ version.js         # 版本比较（Windows 风格 1.2.3.4 + 字母后缀）
@@ -18,6 +19,14 @@ dsh-app-updater/
 │  └─ client.js          # 浏览器半身：设置页 UI
 └─ README.md
 ```
+
+## 运行环境与引擎
+
+- `platform.js` 输出 `env`：`{ platform, family: windows|macos|other, osName, osVersion, osBuild, arch: arm64|x64|x86, archLabel, wingetArch, cpuModel, cpuCount }`。
+- 引擎：Windows → `winget`；macOS → `homebrew`；其它 → `none`（扫描/更新接口返回 400）。
+- 架构匹配：`settings.matchSystemArch !== false` 时，Windows 侧把 `env.wingetArch` 传给
+  `winget download/upgrade --architecture`；清单缺该架构时自动退回自动匹配并写日志。
+  macOS 侧由 Homebrew 决定 cask 架构。
 
 ## 宿主 HTTP 路由
 
@@ -29,13 +38,17 @@ dsh-app-updater/
 {
   "ok": true,
   "platform": "win32",
+  "env": { "platform": "win32", "family": "windows", "osName": "Windows 11", "osVersion": "10.0.26300", "osBuild": "26300", "arch": "x64", "archLabel": "x64（AMD64）", "wingetArch": "x64", "cpuModel": "13th Gen Intel(R) Core(TM) i7-13700K", "cpuCount": 24 },
+  "envSummary": "Windows 11（build 26300） · x64（AMD64）",
+  "engine": { "id": "winget", "available": true, "version": "1.29.380" },
+  "capabilities": { "scan": true, "update": true, "checkVersions": true, "storeAppsIncluded": true, "note": "" },
   "winget": { "available": true, "version": "v1.29.380", "path": "C:\\...\\winget.exe" },
   "phase": "idle",                 // idle | scanning | updating
   "scan": { "running": false, "startedAt": 0, "finishedAt": 0, "error": null },
   "update": { "running": false, "total": 0, "done": 0, "current": null, "error": null },
-  "apps": { "scannedAt": 0, "stats": { "total": 0, "upgradable": 0, "unsupported": 0 }, "items": [] },
+  "apps": { "scannedAt": 0, "stats": { "total": 0, "upgradable": 0, "unsupported": 0 }, "items": [], "engine": "winget" },
   "log": [ { "at": 0, "level": "info|warn|error|success", "text": "..." } ],
-  "settings": { "includeStoreApps": true, "includeRegistryOnly": true, "downloadDir": "", "keepInstallers": true, "hashFallbackUpgrade": true, "dryRun": false }
+  "settings": { "includeStoreApps": true, "includeRegistryOnly": true, "downloadDir": "", "keepInstallers": true, "hashFallbackUpgrade": true, "dryRun": false, "matchSystemArch": true }
 }
 ```
 
@@ -43,17 +56,17 @@ dsh-app-updater/
 
 ```jsonc
 {
-  "id": "Google.Chrome",            // winget id；纯注册表项为 "reg:<GUID 或 key 尾段>"
+  "id": "Google.Chrome",            // winget id；注册表项 "reg:<key>"；macOS "brew:<cask token>"
   "name": "Google Chrome",
   "version": "155.0.8059.85",       // 已安装版本，未知时 ""
   "available": "156.0.8078.48",     // 可升级到的版本，无更新时 ""
   "publisher": "Google LLC",
-  "source": "winget",               // winget | msstore | registry
+  "source": "winget",               // winget | msstore | registry | homebrew
   "installLocation": "C:\\Program Files\\Google\\Chrome\\Application",
   "hasUpdate": true,
   "updateSupported": true,          // 本插件能否驱动更新
   "reason": null,                   // null | "not-in-catalog" | "unknown-version" | "pinned" | "store-managed" | "system-component"
-  "kind": "exe"                     // exe | msi | msix | inno | null（未知）
+  "kind": "exe"                     // exe | msi | msix | inno | cask | null（未知）
 }
 ```
 

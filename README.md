@@ -1,7 +1,8 @@
 # dsh-app-updater — 应用更新（DSH 插件）
 
-检测本机**所有已安装的 Windows 应用**是否有新版本，并从各自**官网下载完整安装包**一键静默更新。
+检测本机**所有已安装应用**是否有新版本，并从各自**官网下载完整安装包**一键静默更新。
 检测过程**不需要打开被检测的软件**。
+自动识别 **Windows / macOS** 与 **ARM64 / x64（Intel）** 架构，按当前系统与芯片挑选对应的安装包。
 
 入口：DeepSeek Harness → 设置 → **应用更新**
 
@@ -95,6 +96,7 @@ dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/rele
 | `keepInstallers` | `true` | 更新后保留安装包；`false` 则在安装完成后删掉该应用刚下载的包。 |
 | `hashFallbackUpgrade` | `true` | 下载失败时退回 `winget upgrade` 兜底。 |
 | `dryRun` | `false` | **演练模式**：只下载官网全量安装包、不执行安装。用来先看会装什么。 |
+| `matchSystemArch` | `true` | 按识别到的系统与芯片架构挑选安装包（Windows 传 `--architecture`；macOS 由 Homebrew 决定）。 |
 
 用 API 改设置（等价于设置面板，适合脚本化）：
 
@@ -122,7 +124,8 @@ curl -X POST -H "Content-Type: application/json" \
 
 ## 依赖
 
-- **Windows**（`winget.exe`，即 Microsoft「应用安装程序 / App Installer」）。没装 winget 时插件仍能列出注册表里的应用，但无法判断是否有新版本。
+- **Windows**：`winget.exe`（Microsoft「应用安装程序 / App Installer」）。没装 winget 时插件仍能列出注册表里的应用，但无法判断是否有新版本。
+- **macOS**：`brew`（[Homebrew](https://brew.sh)）。没装 Homebrew 时明确报告引擎不可用，不会假装能更新。
 - 不需要任何第三方 npm 依赖；宿主半身只用 Node 内置模块，浏览器半身只用宿主提供的 `react`。
 
 ## 接口（宿主半身）
@@ -131,7 +134,7 @@ curl -X POST -H "Content-Type: application/json" \
 |---|---|---|
 | GET | `/dsh-app-updater/state.json` | 当前状态、应用清单、日志、设置 |
 | GET | `/dsh-app-updater/apps.json` | 只取应用清单与统计 |
-| GET | `/dsh-app-updater/health.json` | 自检（路由数、数据目录） |
+| GET | `/dsh-app-updater/health.json` | 自检：版本、运行环境、引擎与能力、路由数、数据目录 |
 | POST | `/dsh-app-updater/scan` | `{confirm:true, force:true}` 开始扫描 |
 | POST | `/dsh-app-updater/update` | `{confirm:true, ids:[...]}` 开始更新队列 |
 | POST | `/dsh-app-updater/cancel` | `{confirm:true}` 取消未开始项 |
@@ -157,10 +160,29 @@ dsh plugin --profile <profile> add link:/path/to/dsh-app-updater
 ## 测试
 
 ```bash
-node test/unit.mjs              # 36 项：定宽表格解析、版本比较、安装包清单与静默参数
+node test/unit.mjs              # 66 项：定宽表格解析、版本比较、清单与静默参数、系统/架构识别、Homebrew 解析
 node test/render.mjs            # 32 项：设置面板、演练提示、列宽拖拽、请求体
 node test/harness.mjs --scan    # 用假 cordis ctx + 真 HTTP 把宿主半身跑起来
 ```
+
+## 支持的系统与架构
+
+插件启动时会识别本机环境，并据此挑选对应架构的安装包：
+
+| 系统 | 架构 | 更新引擎 | 说明 |
+|---|---|---|---|
+| Windows 10 / 11 | x64 / ARM64 / x86 | **winget** | 把识别到的架构传给 `winget --architecture`；清单没有该架构的包时自动退回自动匹配并记录日志 |
+| macOS 11+ | Apple Silicon / Intel | **Homebrew cask** | Homebrew 自己按本机架构取 cask；没有 Homebrew 时明确报告引擎不可用 |
+| 其它 | — | 无 | 扫描/更新接口返回 400 并说明原因 |
+
+识别结果会显示在状态行与设置面板的「运行环境」里，例如
+`Windows 11（build 26300） · x64（AMD64） · winget 1.29.380` 或
+`macOS 15（Sequoia） · Apple Silicon（ARM64） · Homebrew 4.5.0`。
+
+还可以在设置面板里关掉「按本机架构安装包」——关闭后把选择权交回 winget 自己（Homebrew 一直按本机架构）。
+
+> macOS 的 Homebrew 路径是按 Homebrew 官方 CLI 行为实现的，识别与解析逻辑有单测覆盖；
+> 但本插件主要在 Windows 上开发，macOS 上的安装/更新没有真机验证过，遇到问题请开 Issue。
 
 ## 卸载
 
