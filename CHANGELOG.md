@@ -2,6 +2,62 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] — 2026-10-31
+
+### 修复
+
+- **机器级安装全部失败的问题**：进程没有管理员令牌时，MSI 直接失败（msiexec 1603，
+  MSI 日志里是 `Error 1925: You do not have sufficient privileges…`），而部分安装器是
+  **静默退出 0 却什么都没装**（实测 Logitech G HUB）。两个现象同源，都是权限。
+- **安装后复核**：退出码 0 不再等于成功。安装完成后用「安装前版本 / 安装后版本 / 目标版本」
+  判断是否真的生效，没生效就如实报失败 —— 原来只看退出码，会把 G HUB 那种
+  「退出码 0、版本没变」的情况误报成「更新完成」。
+- **架构过滤回退**：`winget download/upgrade --architecture x64` 在清单里没有该架构时现在能
+  正确识别（中文报错是「找不到适用的安装程序」，旧正则只匹配了「没有适用」）并退回不限架构
+  重试；`winget upgrade` 兜底同时补上 `--include-unknown`（虎牙直播的已装版本被读成 Unknown，
+  不带它直接「目录里没有适用的更新」）。
+- **Edge**：winget 目录里的 `Microsoft.Edge` 是企业版 MSI，与本机消费版 Edge 的安装技术不匹配，
+  winget 直接拒绝（`0x8A15008E`「安装技术与当前安装的版本不同，请卸载包并安装较新版本」），
+  现在先走 Edge 自带的更新服务 `MicrosoftEdgeUpdate.exe /ua`；若它没生效（实测该机的
+  EdgeUpdate 引擎目录是 `1.3.311.5` 而服务主程序还是 `1.3.275.13`，服务起不来，`/ua` 直接
+  `0x80070002`），自动退回安装 winget 目录里的官网全量包（企业版 MSI，提权执行）——
+  实测这一步能把 Edge 正常装到目标版本，winget 拒绝执行只是因为它的策略。
+- **读不到版本的应用**：虎牙直播的卸载信息里没有版本号，winget 永远显示 `Unknown`。
+  复核阶段不再把它误判为失败，改为「已安装、未复核」写进结果与日志。
+- **「安装包不生效」的软件给出可操作提示**：实测 Logitech G HUB 的更新包早已下载到
+  `%ProgramData%\LGHUB\next.json` 指向的 depots（build 880806 / 2026.7.992920），但安装器
+  `--silent` 与 `winget upgrade` 都会在 3 秒内退出 0 且什么都不装，只有**启动 G HUB 本体**
+  之后 `current.json` 才跳到新版本。插件承诺不启动用户的软件，所以这类情况现在会在失败
+  原因里直接给出「手动打开一次该应用即可完成升级」的提示（`updateHintFor`）。
+- **MSI 日志**：MSI 安装现在带 `/l*v <下载目录>\<包名>.msi.log`，失败时把日志路径写进错误信息
+  （「Error 1925」就是这么被找到的）。
+- **残留清单**：关闭「保留安装包」时，现在连 winget 落盘的 `.yaml` 清单一并删除。
+
+### 新增
+
+- **自动提权安装**（`lib/elevate.js`）：需要管理员的安装类命令交给 `Start-Process -Verb RunAs`
+  的提权副本执行，退出码与输出写进临时文件后读回。新增开关「自动提权安装」（默认开启）。
+  UAC 为「始终通知」时每次安装会弹一次确认；把 `ConsentPromptBehaviorAdmin` 设为 0
+  （管理员静默提权）时完全无感。
+- 说明：提权副本是独立进程，取消更新只会停掉启动器，已经开始的那次安装会自己跑完。
+
+### 安全
+
+- **接入宿主 connection 准入**（插件市场 dshopen.org 对 1.2.0 的复核意见）：所有
+  `/dsh-app-updater/*` 路由先过 `ctx.connection.admit(request)` —— DSH 用来做 Host/Origin
+  信任校验与浏览器会话 / API 认证的那套边界，宿主自己的 `/api` 路由用的就是它。
+  未通过准入的请求直接得到 `401`/`403`；带凭据的请求一律以准入结果为准。
+  只有在宿主没有 `connection` 服务、或者请求不带任何连接凭据且来自回环地址时，才退回旧的
+  「回环」规则，并在响应头标注 `X-DSH-Admission: loopback-legacy`（宿主自己的 Electron
+  载体与本机脚本都不带 Cookie，需要一个不误伤它们的路径）。
+- 因此 README 里「用 curl 直接改设置」的例子现在需要带上 DSH 的会话 Cookie，或在
+  `connection` 不可用的宿主上从回环地址调用。
+
+### 说明
+
+- 读类命令（`winget list` / `upgrade --include-unknown` / `--version`）不提权。
+- `update.results[]` 新增 `installOk`（安装器自身是否报成功）与 `manifest`（落盘的清单位置）。
+
 ## [1.2.0] — 2026-10-31
 
 ### 新增

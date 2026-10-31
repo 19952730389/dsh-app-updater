@@ -359,7 +359,7 @@ tree = rt.render();
 group("设置面板与列宽手柄");
 ok(byClass(tree, "appupd-panel").length === 1, "渲染出插件设置面板");
 const switches = byClass(tree, "appupd-switch");
-ok(switches.length === 6, "渲染出 6 个设置开关", switches.length);
+ok(switches.length === 7, "渲染出 7 个设置开关（新增自动提权）", switches.length);
 ok(byClass(tree, "appupd-grip").length === 4, "渲染出 4 个列宽拖拽手柄", byClass(tree, "appupd-grip").length);
 const ths = walk(tree).filter((n) => n.type === "th");
 ok(ths.length === 6, "表头 6 列", ths.length);

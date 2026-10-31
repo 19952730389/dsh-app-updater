@@ -27,10 +27,24 @@ dsh-app-updater/
 - 架构匹配：`settings.matchSystemArch !== false` 时，Windows 侧把 `env.wingetArch` 传给
   `winget download/upgrade --architecture`；清单缺该架构时自动退回自动匹配并写日志。
   macOS 侧由 Homebrew 决定 cask 架构。
+- 提权（`lib/elevate.js`）：`settings.autoElevate !== false` 且当前进程没有管理员令牌时，
+  安装类命令（安装包本体、`winget upgrade` 兜底）交给 `Start-Process -Verb RunAs` 的提权副本
+  执行，退出码与输出写进临时文件后读回；`cancelled` 表示 UAC 被取消（1223）。
+  读类命令（`winget list` / `upgrade --include-unknown` / `--version`）不提权。
+- 复核：安装后必须用「安装前版本 / 安装后版本 / 目标版本」判断是否真的生效，退出码 0 不算成功
+  （机器级安装包在未提权时会静默退出 0 却什么都没装）。`update.results[].installOk` 记录
+  安装器自身是否报成功，`verified` 记录复核时读到的版本。
+- 自带更新服务：Edge 的 winget 目录条目是企业版 MSI，与本机消费版安装技术不匹配
+  （`0x8A15008E`），改走 `MicrosoftEdgeUpdate.exe /ua`，再由复核轮询确认版本就位。
 
 ## 宿主 HTTP 路由
 
-全部 `kind: "exact"`，前缀 `/dsh-app-updater/`。写操作要求 loopback + `confirm: true`。
+全部 `kind: "exact"`，前缀 `/dsh-app-updater/`。每个请求先过 **connection 准入**：
+`ctx.connection.admit(req)`（DSH 的 Host/Origin 信任校验 + 浏览器会话 / API 认证，
+宿主自己的 `/api` 路由用的同一套），被拒即返回 `401`（未认证）/ `403`（不可信来源）；
+写操作再要求 `confirm: true`。
+宿主没有 `connection` 服务、或请求不带任何连接凭据且来自回环地址时，退回旧的「回环」检查，
+并在响应头标注 `X-DSH-Admission: loopback-legacy`（`lib/index.js` 的 `admissionGate`）。
 
 ### GET /dsh-app-updater/state.json
 
@@ -48,7 +62,7 @@ dsh-app-updater/
   "update": { "running": false, "total": 0, "done": 0, "current": null, "error": null },
   "apps": { "scannedAt": 0, "stats": { "total": 0, "upgradable": 0, "unsupported": 0 }, "items": [], "engine": "winget" },
   "log": [ { "at": 0, "level": "info|warn|error|success", "text": "..." } ],
-  "settings": { "includeStoreApps": true, "includeRegistryOnly": true, "downloadDir": "", "keepInstallers": true, "hashFallbackUpgrade": true, "dryRun": false, "matchSystemArch": true }
+  "settings": { "includeStoreApps": true, "includeRegistryOnly": true, "downloadDir": "", "keepInstallers": true, "hashFallbackUpgrade": true, "dryRun": false, "matchSystemArch": true, "autoElevate": true }
 }
 ```
 
@@ -81,11 +95,30 @@ body `{ "confirm": true, "force": true }` → `{ "ok": true, "started": true }`�
 ### POST /dsh-app-updater/update
 
 body `{ "confirm": true, "ids": ["Google.Chrome", "..."], "mode": "silent" }`
-→ `{ "ok": true, "started": true, "queued": 3 }`（串行执行，逐条下载官网全量包 → 校验 → 静默安装）
+→ `{ "ok": true, "started": true, "queued": 3 }`
+（串行执行，逐条：下载官网全量包 → 校验哈希 → 静默安装（需要管理员时自动提权）→ 复核版本。
+Edge 由 `MicrosoftEdgeUpdate.exe /ua` 处理。`settings.dryRun` 时只下载、不安装、不复核。）
+
+`update.results[]`（每条一次更新）：
+
+```jsonc
+{
+  "id": "Microsoft.Edge",
+  "ok": false,              // 最终结论：复核不通过就是 false，哪怕安装器报成功
+  "installOk": true,        // 安装器自身是否报成功（退出码 0 / winget 成功）
+  "error": "安装报告成功，但没有生效：版本没有变化（仍为 156.0.4314.50，目标 156.0.4314.58）",
+  "installer": "C:\\...\\Microsoft Edge_156.0.4314.58_Machine_X64_msi_en-US.msi",
+  "manifest": "C:\\...\\Microsoft Edge_156.0.4314.58_Machine_X64_msi_en-US.yaml",
+  "verified": "156.0.4314.50",   // 复核时读到的已装版本
+  "selfUpdater": "edgeupdate",  // 走自带更新服务时存在
+  "note": "已交给 Microsoft Edge 更新服务，等待版本就位",
+  "durationMs": 33288
+}
+```
 
 ### POST /dsh-app-updater/cancel
 
-→ `{ "ok": true }`（取消尚未开始的项目；正在安装的进程会收到终止请求）
+→ `{ "ok": true }`（取消尚未开始的项目；提权副本是独立进程，取消只会停掉启动器，已经开始的那次安装会自己跑完）
 
 ### POST /dsh-app-updater/settings
 

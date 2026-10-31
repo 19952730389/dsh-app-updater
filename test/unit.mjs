@@ -18,7 +18,9 @@ import {
   sliceByWidth,
 } from "../lib/winget.js";
 import { compareVersions, isNewer, looksLikeVersion, splitVersion } from "../lib/version.js";
-import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs, parseBrewCaskVersions, parseBrewOutdated, findBrew } from "../lib/engine.js";
+import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs, parseBrewCaskVersions, parseBrewOutdated, findBrew, isArchNotFoundError, explainInstallerExitCode, evaluateUpdateResult, findEdgeUpdate, updateHintFor } from "../lib/engine.js";
+import { psQuote, ELEVATION_CANCELLED } from "../lib/elevate.js";
+import { admissionGate, hasConnectionCredentials } from "../lib/index.js";
 import {
   detectEnvironment,
   describeEnvironment,
@@ -243,6 +245,102 @@ const outdated = parseBrewOutdated(JSON.stringify({ casks: [{ name: "visual-stud
 ok(outdated.get("visual-studio-code") === "1.95.0" && outdated.get("iterm2") === "3.5.10", "解析可升级 cask", [...outdated]);
 ok(parseBrewOutdated("not json").size === 0, "坏 JSON 不抛错");
 ok(findBrew({ HOMEBREW_PREFIX: "/nonexistent-prefix-for-test" }) === null, "找不到 brew 时返回 null");
+
+/* ---------------- 提权与安装复核 ---------------- */
+group("提权执行（PowerShell 助手）");
+ok(psQuote("C:\\Program Files\\a.exe") === "'C:\\Program Files\\a.exe'", "psQuote 保留 Windows 路径");
+ok(psQuote("it's") === "'it''s'", "psQuote 转义单引号");
+ok(psQuote(null) === "''", "psQuote 处理 null");
+ok(ELEVATION_CANCELLED === 1223, "UAC 被取消的退出码是 1223");
+
+group("架构缺失错误识别（中英文都要认）");
+ok(isArchNotFoundError("找不到适用的安装程序;有关详细信息，请参阅日志。"), "中文「找不到适用」");
+ok(isArchNotFoundError("No applicable installer found"), "英文 No applicable installer");
+ok(!isArchNotFoundError("No package found matching input criteria"), "「找不到该包」不算架构问题");
+ok(!isArchNotFoundError(""), "空输出不算");
+ok(!isArchNotFoundError(null), "null 不算");
+
+group("安装后复核：退出码 0 不等于成功");
+ok(evaluateUpdateResult({ before: "2026.6.981214", after: "2026.6.981214", target: "2026.7.992920" }).changed === false, "G HUB：退出码 0、版本没变 → 判为失败");
+ok(evaluateUpdateResult({ before: "2026.6.981214", after: "2026.7.992920", target: "2026.7.992920" }).changed === true, "达到目标版本 → 成功");
+ok(evaluateUpdateResult({ before: "2026.6.981214", after: "2026.8.0", target: "2026.7.992920" }).changed === true, "超过目标版本 → 成功");
+ok(evaluateUpdateResult({ before: "Unknown", after: "Unknown", target: "7.5.0.0" }).unverifiable === true, "虎牙：读不到版本 → 无法复核（不能算失败）");
+ok(evaluateUpdateResult({ before: "1.0", after: "", target: "2.0" }).unverifiable === true, "空版本 → 无法复核");
+ok(evaluateUpdateResult({ before: "1.0.0", after: "1.2.0", target: "" }).changed === true, "目标未知但版本变新 → 成功");
+ok(evaluateUpdateResult({ before: "1.2.0", after: "1.2.0", target: "" }).changed === false, "目标未知且没变 → 失败");
+
+group("安装器退出码 → 人话");
+ok(explainInstallerExitCode(1603, "").includes("1603"), "1603 给出可读解释");
+ok(explainInstallerExitCode(1603, "first line\nsecond line") === "first line", "有输出时优先用输出的首行");
+ok(explainInstallerExitCode(9999, "") === "安装程序退出码 9999", "未知退出码原样透出");
+
+group("Edge 自带更新服务定位");
+const edgeUpdate = findEdgeUpdate();
+ok(edgeUpdate === null || /MicrosoftEdgeUpdate\.exe$/i.test(edgeUpdate), "返回绝对路径或 null");
+ok(updateHintFor("Logitech.GHUB").includes("启动 G HUB"), "G HUB 给出「启动应用才会应用更新」的提示");
+ok(updateHintFor("microsoft.edge").length > 0, "Edge 有提示");
+ok(updateHintFor("Some.Other") === "" && updateHintFor(null) === "", "未知应用没有提示");
+
+/* ---------------- connection 准入 ---------------- */
+function fakeRes() {
+  const res = { statusCode: 0, headers: {}, body: "" };
+  res.setHeader = (k, v) => {
+    res.headers[k] = v;
+  };
+  res.writeHead = (code, headers) => {
+    res.statusCode = code;
+    Object.assign(res.headers, headers || {});
+  };
+  res.end = (body) => {
+    res.body = String(body == null ? "" : body);
+  };
+  return res;
+}
+function fakeReq({ loopback = true, headers = {} } = {}) {
+  return { socket: { remoteAddress: loopback ? "127.0.0.1" : "10.0.0.5" }, headers };
+}
+
+group("connection 准入（市场审核要求）");
+ok(hasConnectionCredentials({ headers: { cookie: "dsh=x" } }) === true, "识别浏览器会话 Cookie");
+ok(hasConnectionCredentials({ headers: { authorization: "Bearer x" } }) === true, "识别 API Cookie/Authorization");
+ok(hasConnectionCredentials({ headers: {} }) === false, "没有凭据时返回 false");
+ok(admissionGate(fakeReq(), fakeRes(), null) === true, "宿主没有 connection 服务时，回环请求放行");
+{
+  const res = fakeRes();
+  ok(admissionGate(fakeReq({ loopback: false }), res, null) === false && res.statusCode === 403, "没有 connection 服务时，非回环请求 403");
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ peer: { id: "peer-1" } }) };
+  ok(admissionGate(fakeReq(), res, connection) === true && res.statusCode === 0, "准入通过 → 放行且不写响应");
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ rejection: 403 }) };
+  ok(admissionGate(fakeReq({ loopback: false }), res, connection) === false && res.statusCode === 403, "准入拒绝 403（不可信来源）→ 403");
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ rejection: 401 }) };
+  ok(admissionGate(fakeReq({ headers: { cookie: "dsh=x" } }), res, connection) === false && res.statusCode === 401, "带凭据但未认证 → 401");
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ rejection: 401 }) };
+  ok(
+    admissionGate(fakeReq(), res, connection) === true && res.headers["X-DSH-Admission"] === "loopback-legacy",
+    "无凭据的回环请求退回旧规则并标注响应头"
+  );
+}
+{
+  const res = fakeRes();
+  const connection = {
+    admit: () => {
+      throw new Error("carrier unavailable");
+    },
+  };
+  ok(admissionGate(fakeReq(), res, connection) === false && res.statusCode === 500, "准入抛错 → 500 而不是静默放行");
+}
 
 /* ---------------- 结果 ---------------- */
 console.log(`\n${failures === 0 ? "全部通过" : "存在失败"}：${checks - failures}/${checks}`);

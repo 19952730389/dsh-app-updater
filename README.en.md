@@ -95,6 +95,7 @@ State file: `%USERPROFILE%\.dsh\dsh-app-updater\state.json`
 | `hashFallbackUpgrade` | `true` | Fall back to `winget upgrade` when the download fails. |
 | `dryRun` | `false` | **Rehearsal mode**: download the vendor's full installer but never install it. |
 | `matchSystemArch` | `true` | Match the installer to the detected system and CPU architecture (Windows passes `--architecture`; macOS is resolved by Homebrew). |
+| `autoElevate` | `true` | **Automatic elevation**: install commands that need administrator rights run in an elevated copy (UAC prompts once per install, when UAC prompts at all). |
 
 Everything above is editable from the plugin's own settings panel inside the settings page.
 The panel also accepts API calls:
@@ -113,8 +114,15 @@ curl -X POST -H "Content-Type: application/json" \
   `settings` / `open-downloads` accept only requests from loopback with `confirm:true`.
 - **No guessed silent switches**: the publisher's declared `Silent` switches are preferred;
   generic defaults are used only when a manifest is unavailable.
-- **No silent elevation**: installers that need administrator rights show the normal UAC prompt.
-- **Version is verified after installing** and recorded in the log.
+- **Elevation only for installs, and on demand**: install commands that need administrator rights
+  (MSI packages, installers writing into `Program Files`, the `winget upgrade` fallback) run in an
+  elevated copy through `Start-Process -Verb RunAs`. With UAC set to "always notify" you get one
+  prompt per install; with `ConsentPromptBehaviorAdmin = 0` it is completely silent. Reads
+  (`winget list` / `upgrade --include-unknown` / `--version`) never elevate.
+- **A zero exit code is not success**: after installing, the plugin compares the installed version
+  against the target version and reports a failure when nothing actually changed — machine-scope
+  installers silently exit 0 without installing anything when they lack administrator rights
+  (Logitech G HUB used to be reported as "updated" that way).
 - **System components** (`.NET`, VC++ runtimes, …) are listed but not updated by default.
 - **Only its own directory is written**: state and logs live in `~/.dsh/dsh-app-updater/`.
 

@@ -100,6 +100,7 @@ dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/rele
 | `hashFallbackUpgrade` | `true` | 下载失败时退回 `winget upgrade` 兜底。 |
 | `dryRun` | `false` | **演练模式**：只下载官网全量安装包、不执行安装。用来先看会装什么。 |
 | `matchSystemArch` | `true` | 按识别到的系统与芯片架构挑选安装包（Windows 传 `--architecture`；macOS 由 Homebrew 决定）。 |
+| `autoElevate` | `true` | **自动提权安装**：需要管理员的安装包（MSI、写入 `Program Files`）改由管理员上下文执行；UAC 开启时每次安装会弹一次确认。 |
 
 用 API 改设置（等价于设置面板，适合脚本化）：
 
@@ -116,10 +117,17 @@ curl -X POST -H "Content-Type: application/json" \
 
 ## 安全边界
 
-- **写操作全部要求本机来源 + 显式确认**：`scan` / `update` / `cancel` / `settings` / `open-downloads` 只接受 loopback 请求且必须带 `confirm:true`。
+- **接入宿主 connection 准入**：每个请求先过 `ctx.connection.admit(request)` —— DSH 用来做
+  Host/Origin 信任校验与浏览器会话 / API 认证的那套边界（宿主自己的 `/api` 路由用的就是它），
+  未通过的请求直接得到 `401`/`403`。宿主没有 `connection` 服务、或请求不带任何连接凭据且来自
+  回环地址时，退回旧的「回环」规则，并在响应头标注 `X-DSH-Admission: loopback-legacy`。
+- **写操作还要显式确认**：`scan` / `update` / `cancel` / `settings` / `open-downloads` 必须带 `confirm:true`。
 - **不猜测静默参数**：优先用发布方在清单里声明的 `Silent` 参数；清单缺失时才按安装包类型用保守的默认开关。
-- **不静默提权**：需要管理员权限的安装包会正常弹出 UAC，由你决定是否放行。
-- **安装后复核版本**：更新完会重新查询一次版本并记录，日志里能看到「更新完成，当前版本 X」。
+- **需要管理员时自动提权**：机器级安装包（MSI、写入 `Program Files`）交给
+  `Start-Process -Verb RunAs` 的提权副本执行（可在设置里关掉「自动提权安装」）；
+  UAC 为「始终通知」时每次安装会弹一次确认。
+- **安装后复核版本**：用「安装前 / 安装后 / 目标」三个版本判断这次更新是否真的生效 ——
+  退出码 0 不再等于成功（机器级安装包在没提权时会静默退出 0 却什么都没装）。
 - **不做系统组件更新**：`.NET` 运行时、VC++ 运行库等仍会列出来，但默认不作为一键更新的目标。
 - **只写自己的目录**：状态与日志写在 `~/.dsh/dsh-app-updater/`，不碰 profile 与宿主配置。
 
@@ -183,6 +191,15 @@ node test/harness.mjs --scan    # 用假 cordis ctx + 真 HTTP 把宿主半身�
 `macOS 15（Sequoia） · Apple Silicon（ARM64） · Homebrew 4.5.0`。
 
 还可以在设置面板里关掉「按本机架构安装包」——关闭后把选择权交回 winget 自己（Homebrew 一直按本机架构）。
+
+机器级安装（MSI、写入 `Program Files`）需要管理员权限，否则 MSI 会返回 1603（MSI 日志里是
+`Error 1925: You do not have sufficient privileges…`），部分安装器则可能**静默退出 0 却什么都没装**。
+因此安装类命令默认自动提权执行（设置里的「自动提权安装」，默认开启）：安装包本体与
+`winget upgrade` 兜底都交给 `Start-Process -Verb RunAs` 的提权副本，装完再按
+「安装前版本 / 安装后版本 / 目标版本」复核这次更新是否真的生效。
+UAC 为「始终通知」时每次安装会弹一次确认；把 DSH 本身以管理员身份运行则不会再弹。
+Edge 走它自带的更新服务：winget 目录里的 `Microsoft.Edge` 是企业版 MSI，与本机消费版的
+安装技术不匹配（`0x8A15008E`），winget 会直接拒绝。
 
 > macOS 的 Homebrew 路径是按 Homebrew 官方 CLI 行为实现的，识别与解析逻辑有单测覆盖；
 > 但本插件主要在 Windows 上开发，macOS 上的安装/更新没有真机验证过，遇到问题请开 Issue。
