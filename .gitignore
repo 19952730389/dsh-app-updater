@@ -2,6 +2,7 @@
 /dist/
 *.log
 *.tgz
+.npmrc
 .DS_Store
 Thumbs.db
 .test-home/
