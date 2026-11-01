@@ -359,7 +359,61 @@ tree = rt.render();
 group("设置面板与列宽手柄");
 ok(byClass(tree, "appupd-panel").length === 1, "渲染出插件设置面板");
 const switches = byClass(tree, "appupd-switch");
-ok(switches.length === 7, "渲染出 7 个设置开关（新增自动提权）", switches.length);
+ok(switches.length === 7, "渲染出 7 个设置开关（Windows：不含 macOS 专属项）", switches.length);
+
+group("设置面板按平台显示开关");
+{
+  const macState = baseState({
+    platform: "darwin",
+    env: { family: "macos", platform: "darwin", osName: "macOS 15（Sequoia）", archLabel: "Apple Silicon（ARM64）" },
+    envSummary: "macOS 15（Sequoia） · Apple Silicon（ARM64）",
+    engine: { id: "homebrew", available: true, version: "4.5.0" },
+  });
+  statePayload = macState;
+  rt.reset();
+  await tick();
+  tree = rt.render();
+  await tick();
+  tree = rt.render();
+  const macSwitches = byClass(tree, "appupd-switch");
+  ok(macSwitches.length === 5, "macOS 显示 5 个开关（跨平台 3 + macOS 专属 2）", macSwitches.length);
+  const labels = byClass(tree, "appupd-field-label").map(textOf);
+  ok(!labels.includes("自动提权安装"), "macOS 不显示「自动提权安装」", labels);
+  ok(!labels.includes("下载失败时回退 winget"), "macOS 不显示「下载失败时回退 winget」", labels);
+  ok(labels.includes("包含非 Homebrew 应用"), "macOS 显示「包含非 Homebrew 应用」", labels);
+  ok(labels.includes("包含 App Store 应用"), "macOS 显示「包含 App Store 应用」", labels);
+  ok(labels.includes("演练模式") && labels.includes("保留安装包"), "跨平台开关仍然显示", labels);
+}
+statePayload = baseState();
+rt.reset();
+await tick();
+tree = rt.render();
+await tick();
+tree = rt.render();
+
+group("macOS 空状态文案");
+{
+  const emptyMac = baseState({
+    platform: "darwin",
+    env: { family: "macos", platform: "darwin" },
+    apps: { scannedAt: Date.now(), stats: { total: 0, upgradable: 0, unsupported: 0 }, items: [] },
+  });
+  statePayload = emptyMac;
+  rt.reset();
+  await tick();
+  tree = rt.render();
+  await tick();
+  tree = rt.render();
+  const emptyText = textOf(byClass(tree, "appupd-empty")[0] || tree);
+  ok(emptyText.includes("应用目录") || emptyText.includes("运行日志"), "macOS 空列表给出可执行的下一步，而不是只说「未检测到」", emptyText.slice(0, 120));
+  ok(!emptyText.includes("未检测到任何已安装应用"), "macOS 不再显示会产生误解的那句话");
+}
+statePayload = baseState();
+rt.reset();
+await tick();
+tree = rt.render();
+await tick();
+tree = rt.render();
 ok(byClass(tree, "appupd-grip").length === 4, "渲染出 4 个列宽拖拽手柄", byClass(tree, "appupd-grip").length);
 const ths = walk(tree).filter((n) => n.type === "th");
 ok(ths.length === 6, "表头 6 列", ths.length);

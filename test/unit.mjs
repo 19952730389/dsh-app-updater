@@ -20,6 +20,13 @@ import {
 import { compareVersions, isNewer, looksLikeVersion, splitVersion } from "../lib/version.js";
 import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs, parseBrewCaskVersions, parseBrewOutdated, findBrew, isArchNotFoundError, explainInstallerExitCode, evaluateUpdateResult, findEdgeUpdate, updateHintFor } from "../lib/engine.js";
 import { psQuote, ELEVATION_CANCELLED } from "../lib/elevate.js";
+import {
+  applicationDirs,
+  parseCaskCatalog,
+  pickCask,
+  normalizeAppKey,
+  buildMacosItems,
+} from "../lib/macos.js";
 import { admissionGate, hasConnectionCredentials, resolveLegacyLoopbackOptIn, LEGACY_LOOPBACK_ENV } from "../lib/index.js";
 import {
   detectEnvironment,
@@ -232,8 +239,11 @@ ok(envMac.family === "macos" && envMac.osName.includes("Sequoia") && envMac.arch
 
 ok(capabilitiesFor(envWinArm, false).scan === true, "有 winget 时 Windows 可扫描");
 ok(capabilitiesFor(envWinArm, false).note.includes("winget"), "缺 winget 时给出提示", capabilitiesFor(envWinArm, false).note);
-ok(capabilitiesFor(envMac, false).scan === false, "macOS 缺 Homebrew 时不可扫描");
+ok(capabilitiesFor(envMac, false).update === false, "macOS 缺 Homebrew 时不可更新");
+ok(capabilitiesFor(envMac, false).note.includes("Homebrew"), "macOS 缺 Homebrew 时提示装 Homebrew", capabilitiesFor(envMac, false).note);
 ok(capabilitiesFor(envMac, true).scan === true, "macOS 有 Homebrew 时可扫描");
+ok(capabilitiesFor(envMac, false).scan === true, "macOS 没有 Homebrew 也能扫描（只是不能更新）——「0 个应用」的真正原因不是没 Homebrew");
+ok(capabilitiesFor(envMac, false).update === false, "macOS 没有 Homebrew 时不可更新");
 ok(capabilitiesFor({ family: "other" }, false).scan === false, "其它系统不可扫描");
 
 /* ---------------- Homebrew 解析 ---------------- */
@@ -245,6 +255,124 @@ const outdated = parseBrewOutdated(JSON.stringify({ casks: [{ name: "visual-stud
 ok(outdated.get("visual-studio-code") === "1.95.0" && outdated.get("iterm2") === "3.5.10", "解析可升级 cask", [...outdated]);
 ok(parseBrewOutdated("not json").size === 0, "坏 JSON 不抛错");
 ok(findBrew({ HOMEBREW_PREFIX: "/nonexistent-prefix-for-test" }) === null, "找不到 brew 时返回 null");
+
+/* ---------------- macOS 应用枚举（本次修复的核心） ---------------- */
+group("macOS 应用枚举");
+ok(applicationDirs("/Users/x").includes("/Applications"), "枚举 /Applications");
+ok(applicationDirs("/Users/x").includes("/Users/x/Applications"), "枚举 ~/Applications");
+ok(applicationDirs("/Users/x").includes("/System/Applications/Utilities"), "枚举系统工具目录");
+
+const catalogList = [
+  {
+    token: "visual-studio-code",
+    version: "1.144.0",
+    name: ["Microsoft Visual Studio Code"],
+    artifacts: [{ app: ["Visual Studio Code.app"], target: "/Applications/Visual Studio Code.app" }],
+  },
+  {
+    token: "iterm2",
+    version: "3.5.14",
+    name: ["iTerm2"],
+    artifacts: [{ app: ["iTerm.app"] }],
+  },
+  {
+    token: "raycast",
+    version: "1.99.0",
+    name: ["Raycast"],
+    artifacts: [{ app: ["Raycast.app"] }],
+  },
+];
+const catalog = parseCaskCatalog(catalogList);
+ok(catalog.byToken.get("iterm2").version === "3.5.14", "目录按 token 建索引");
+ok(catalog.byApp.get("iterm.app")[0].token === "iterm2", "目录按 .app 文件名建索引（大小写无关）");
+
+const macApps = [
+  // 通过 Homebrew 装、且有新版
+  { path: "/Applications/Visual Studio Code.app", bundleName: "Visual Studio Code.app", name: "Visual Studio Code", version: "1.140.0", bundleId: "com.microsoft.VSCode", appStore: false, system: false },
+  // 通过 Homebrew 装、已是最新
+  { path: "/Applications/iTerm.app", bundleName: "iTerm.app", name: "iTerm2", version: "3.5.14", bundleId: "com.googlecode.iterm2", appStore: false, system: false },
+  // 拖 DMG 装的，Homebrew 不管
+  { path: "/Applications/Raycast.app", bundleName: "Raycast.app", name: "Raycast", version: "1.99.0", bundleId: "com.raycast.macos", appStore: false, system: false },
+  // App Store 装的
+  { path: "/Applications/Xcode.app", bundleName: "Xcode.app", name: "Xcode", version: "16.0", bundleId: "com.apple.dt.Xcode", appStore: true, system: false },
+];
+const brews = new Map([["visual-studio-code", "1.140.0"], ["iterm2", "3.5.14"]]);
+const macBuilt = buildMacosItems({ apps: macApps, brews, outdated: new Map(), catalog, settings: { includeStoreApps: true, includeUnmanagedApps: true } });
+
+ok(macBuilt.items.length === 4, "4 个 .app 全部列出（旧实现只会有 2 个）", macBuilt.items.map((i) => i.name));
+const vsc = macBuilt.items.find((i) => i.name === "Visual Studio Code");
+ok(vsc && vsc.hasUpdate && vsc.available === "1.144.0", "Homebrew 管理 + 有新版本 → 可更新并给出目标版本", vsc);
+ok(vsc && vsc.updateSupported === true && vsc.id === "brew:visual-studio-code", "可更新的应用带上 brew: token", vsc && vsc.id);
+const iterm = macBuilt.items.find((i) => i.name === "iTerm2");
+ok(iterm && iterm.hasUpdate === false && iterm.reason === null, "Homebrew 管理且已最新 → 不可更新但没有「不支持」理由", iterm);
+const ray = macBuilt.items.find((i) => i.name === "Raycast");
+ok(ray && ray.hasUpdate === false && ray.reason === "not-managed", "非 Homebrew 应用：列出但标注「非 Homebrew 管理」", ray);
+ok(ray && ray.updateSupported === false, "非 Homebrew 应用不会被标成可更新");
+const xcode = macBuilt.items.find((i) => i.name === "Xcode");
+ok(xcode && xcode.reason === "store-managed" && xcode.source === "appstore", "App Store 应用标注由商店管理", xcode);
+ok(macBuilt.items.filter((i) => i.hasUpdate).length === 1, "只有 1 个可更新");
+
+// --greedy 能强制升级的 cask（自更新应用）也要露出可用版本
+const greedy = buildMacosItems({ apps: macApps, brews, outdated: new Map([["iterm2", "3.5.15"]]), catalog, settings: {} });
+ok(greedy.items.find((i) => i.name === "iTerm2").available === "3.5.15", "brew outdated --greedy 报告的版本优先", greedy.items.find((i) => i.name === "iTerm2"));
+
+// 关掉「包含非 Homebrew 应用」后只剩 Homebrew 管理的
+const onlyBrew = buildMacosItems({ apps: macApps, brews, outdated: new Map(), catalog, settings: { includeUnmanagedApps: false } });
+ok(onlyBrew.items.length === 2 && onlyBrew.items.every((i) => i.source === "homebrew"), "关闭开关后只显示 Homebrew 应用", onlyBrew.items.map((i) => i.name));
+
+// 关掉「包含 App Store 应用」
+const noStore = buildMacosItems({ apps: macApps, brews, outdated: new Map(), catalog, settings: { includeStoreApps: false } });
+ok(!noStore.items.some((i) => i.name === "Xcode"), "关闭 App Store 开关后不显示 Xcode");
+
+// 没有 cask 目录时降级：仍然列出应用，只是都不认为可更新
+const noCatalog = buildMacosItems({ apps: macApps, brews, outdated: new Map(), catalog: null, settings: {} });
+ok(noCatalog.items.length === 4 && noCatalog.items.every((i) => !i.hasUpdate), "没有 cask 目录也照样列出应用", noCatalog.items.length);
+ok(noCatalog.warnings.some((w) => w.includes("cask 目录")), "没有 cask 目录时给出警告");
+
+// Homebrew 装了但 .app 不在标准目录（字体 / 命令行 cask）
+const brewOnly = buildMacosItems({
+  apps: [],
+  brews: new Map([["font-jetbrains-mono", "2.304"]]),
+  outdated: new Map(),
+  catalog: parseCaskCatalog([{ token: "font-jetbrains-mono", version: "2.304", name: ["JetBrains Mono"], artifacts: [] }]),
+  settings: {},
+});
+ok(brewOnly.items.length === 1 && brewOnly.items[0].id === "brew:font-jetbrains-mono", "没有 .app 的 cask 也能列出", brewOnly.items);
+
+/* ---------------- macOS 目录解析 ---------------- */
+group("cask 目录解析");
+const parsedCatalog = parseCaskCatalog([
+  { token: "raycast", version: "1.99.0", name: ["Raycast"], artifacts: [{ app: ["Raycast.app"] }] },
+  { token: "bad-no-artifacts", version: "1.0" },
+  null,
+  { version: "9.9" },
+]);
+ok(parsedCatalog.byToken.size === 2, "跳过没有 token 的条目", parsedCatalog.byToken.size);
+ok(!parsedCatalog.byApp.has("bad-no-artifacts"), "artifacts 里没有 app 的不建 byApp 索引");
+ok(normalizeAppKey("Visual Studio Code.app") === "visualstudiocode", "应用名归一化去掉 .app 与空格");
+ok(normalizeAppKey("VS Code") === "vscode", "应用名归一化保留字母数字");
+
+group("同名 .app 的多个 cask：挑对那一个");
+// 真实目录里 iterm2 与 iterm2@nightly 都声明 iTerm.app
+const dupCatalog = parseCaskCatalog([
+  { token: "iterm2@nightly", version: "3.6.0", name: ["iTerm2 Nightly"], artifacts: [{ app: ["iTerm.app"] }] },
+  { token: "iterm2", version: "3.7.6", name: ["iTerm2"], artifacts: [{ app: ["iTerm.app"] }] },
+]);
+ok(dupCatalog.byApp.get("iterm.app").length === 2, "两个 cask 都留在候选里", dupCatalog.byApp.get("iterm.app").length);
+ok(
+  pickCask(dupCatalog.byApp.get("iterm.app"), { appName: "iTerm2", bundleName: "iTerm.app", brews: new Map() }).token === "iterm2",
+  "没有安装记录时优先主 token（不是 @nightly）"
+);
+ok(
+  pickCask(dupCatalog.byApp.get("iterm.app"), { appName: "iTerm2", bundleName: "iTerm.app", brews: new Map([["iterm2@nightly", "3.6.0"]]) }).token === "iterm2@nightly",
+  "已装的是 nightly 时优先已装的那个"
+);
+// 弃用 / 停用的 cask 排在后面
+const depCatalog = parseCaskCatalog([
+  { token: "foo-old", version: "1.0", deprecated: true, artifacts: [{ app: ["Foo.app"] }] },
+  { token: "foo", version: "2.0", artifacts: [{ app: ["Foo.app"] }] },
+]);
+ok(pickCask(depCatalog.byApp.get("foo.app"), { appName: "Foo", bundleName: "Foo.app", brews: new Map() }).token === "foo", "弃用的 cask 不会被选中");
 
 /* ---------------- 提权与安装复核 ---------------- */
 group("提权执行（PowerShell 助手）");

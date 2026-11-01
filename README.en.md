@@ -88,8 +88,9 @@ State file: `%USERPROFILE%\.dsh\dsh-app-updater\state.json`
 
 | Key | Default | Meaning |
 |---|---|---|
-| `includeStoreApps` | `true` | List Store (MSIX) apps too (display only). |
-| `includeRegistryOnly` | `true` | Fill in apps missing from the winget catalog using the registry (display only). |
+| `includeStoreApps` | `true` | List store apps too (MSIX on Windows, App Store on macOS; display only). |
+| `includeRegistryOnly` | `true` | Windows: fill in apps missing from the winget catalog using the registry (display only). |
+| `includeUnmanagedApps` | `true` | macOS: also list apps that Homebrew does not manage (drag-to-Applications installs; display only). |
 | `downloadDir` | empty | Custom download folder; empty = `%USERPROFILE%\Downloads\DSH App Updater`. Must be absolute. |
 | `keepInstallers` | `true` | Keep the installer after a successful update. |
 | `hashFallbackUpgrade` | `true` | Fall back to `winget upgrade` when the download fails. |
@@ -147,8 +148,10 @@ curl -X POST -H "Content-Type: application/json" \
 
 - **Windows**: `winget.exe` (Microsoft App Installer). Without winget the plugin can still
   list registry apps, but cannot tell whether they are up to date.
-- **macOS**: `brew` ([Homebrew](https://brew.sh)). Without Homebrew the plugin reports the engine
-  as unavailable instead of pretending it can update anything.
+- **macOS**: no extra dependency is needed to **list** apps (the plugin reads `.app` bundles from
+  `/Applications` and friends); judging and applying updates needs `brew` ([Homebrew](https://brew.sh)).
+  Without Homebrew the apps are still listed, with a note that installing Homebrew enables one-click
+  cask upgrades.
 - No third-party npm dependencies: the host half uses Node built-ins only, the browser half
   only the host-provided `react`.
 
@@ -159,7 +162,7 @@ The plugin detects its own environment at startup and picks the installer that m
 | System | Architecture | Engine | Notes |
 |---|---|---|---|
 | Windows 10 / 11 | x64 / ARM64 / x86 | **winget** | the detected architecture is passed as `winget --architecture`; if the manifest has no installer for it, the plugin falls back to automatic matching and says so in the log |
-| macOS 11+ | Apple Silicon / Intel | **Homebrew casks** | Homebrew itself resolves the right cask for the machine; without Homebrew the engine is reported unavailable |
+| macOS 11+ | Apple Silicon / Intel | **Homebrew casks** | apps are enumerated from `/Applications` and friends, then matched against the cask catalog; Homebrew resolves the right cask for the machine. Without Homebrew the apps are still listed, they just cannot be upgraded in one click |
 | anything else | — | none | the scan/update routes answer 400 with the reason |
 
 The result is shown in the status line and in the settings panel's “运行环境 / Environment” row, e.g.
@@ -169,9 +172,13 @@ The result is shown in the status line and in the settings panel's “运行环�
 The “按本机架构安装包 / match system architecture” switch (on by default) can be turned off to hand
 the choice back to winget; Homebrew always resolves for the local architecture.
 
-> The macOS/Homebrew path follows Homebrew's documented CLI behaviour and its detection and parsing
-> logic are covered by unit tests, but it has not been verified on a real Mac — this plugin is
-> developed on Windows. Please open an issue if something misbehaves there.
+> The macOS app enumeration (`/Applications` + `Info.plist`) and cask matching are covered by unit
+> tests and were validated against the real `formulae.brew.sh` catalog (7,800+ casks), but the
+> macOS **install/update execution** has not been verified on a real Mac — this plugin is developed
+> on Windows. Please open an issue if something misbehaves there.
+>
+> Only the standard application directories are enumerated. Apps installed elsewhere (a custom
+> folder, the Desktop, an external volume) are outside the scan scope by design.
 
 ## HTTP API (host half)
 
@@ -208,8 +215,9 @@ Then add `dsh-app-updater` to `dsh.profile.bundles` in the profile's `package.js
 ## Tests
 
 ```bash
-node test/unit.mjs     # 66 checks: table parsing, version compare, manifest & switches, OS/arch detection, Homebrew parsing
-node test/render.mjs   # 32 checks: settings panel, rehearsal banner, column drag, request bodies
+node test/unit.mjs     # 152 checks: table parsing, version compare, manifest & switches, OS/arch detection, Homebrew parsing, macOS app enumeration & cask matching
+node test/render.mjs   # 44 checks: settings panel (per platform), rehearsal banner, column drag, request bodies
+node test/deny.mjs     # 12 checks: deny-by-default per route when the host has no connection service
 node test/harness.mjs --scan   # boots the host half against a fake cordis ctx + real HTTP
 ```
 

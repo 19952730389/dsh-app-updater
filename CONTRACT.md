@@ -76,19 +76,24 @@ dsh-app-updater/
 
 ```jsonc
 {
-  "id": "Google.Chrome",            // winget id；注册表项 "reg:<key>"；macOS "brew:<cask token>"
+  "id": "Google.Chrome",            // winget id；注册表项 "reg:<key>"；macOS 由 Homebrew 管理的是 "brew:<cask token>"，其余 "macapp:<bundle id>"
   "name": "Google Chrome",
   "version": "155.0.8059.85",       // 已安装版本，未知时 ""
   "available": "156.0.8078.48",     // 可升级到的版本，无更新时 ""
   "publisher": "Google LLC",
-  "source": "winget",               // winget | msstore | registry | homebrew
+  "source": "winget",               // winget | msstore | registry | homebrew | appstore | app
   "installLocation": "C:\\Program Files\\Google\\Chrome\\Application",
   "hasUpdate": true,
   "updateSupported": true,          // 本插件能否驱动更新
-  "reason": null,                   // null | "not-in-catalog" | "unknown-version" | "pinned" | "store-managed" | "system-component"
-  "kind": "exe"                     // exe | msi | msix | inno | cask | null（未知）
+  "reason": null,                   // null | "not-in-catalog" | "not-managed" | "unknown-version" | "pinned" | "store-managed" | "system-component"
+  "kind": "exe"                     // exe | msi | msix | inno | cask | app | null（未知）
 }
 ```
+
+`reason` 里的 `not-managed` 是 macOS 专用：应用在标准目录里枚举到了，但不是由 Homebrew 管理
+（拖 DMG / 手动安装），所以能列出、不能一键更新。`source` 的 `app` / `appstore` 同理只出现在
+macOS。macOS 的扫描范围是 `/Applications`、`/Applications/Utilities`、`/System/Applications`
+（及其 `Utilities`）与 `~/Applications`；装在别处的应用不在范围内。
 
 ### POST /dsh-app-updater/scan
 

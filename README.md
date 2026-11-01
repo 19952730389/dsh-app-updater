@@ -93,9 +93,10 @@ dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/rele
 
 | 键 | 默认 | 说明 |
 |---|---|---|
-| `includeStoreApps` | `true` | 是否把商店（MSIX）应用列进来（只展示，不会被更新）。 |
-| `includeRegistryOnly` | `true` | 是否用注册表补齐 winget 未收录的应用（只展示，不能更新）。 |
-| `downloadDir` | 空 | 自定义安装包下载目录；空 = `%USERPROFILE%\Downloads\DSH App Updater`。 |
+| `includeStoreApps` | `true` | 是否把商店应用列进来（Windows 是 MSIX、macOS 是 App Store 应用；只展示，不会被更新）。 |
+| `includeRegistryOnly` | `true` | Windows：是否用注册表补齐 winget 未收录的应用（只展示，不能更新）。 |
+| `includeUnmanagedApps` | `true` | macOS：是否把非 Homebrew 管理（拖 DMG / 手动装）的应用也列出来（只展示，不能更新）。 |
+| `downloadDir` | 空 | 自定义安装包下载目录；空 = `%USERPROFILE%\Downloads\DSH App Updater`（macOS 为 `~/Downloads/DSH App Updater`）。 |
 | `keepInstallers` | `true` | 更新后保留安装包；`false` 则在安装完成后删掉该应用刚下载的包。 |
 | `hashFallbackUpgrade` | `true` | 下载失败时退回 `winget upgrade` 兜底。 |
 | `dryRun` | `false` | **演练模式**：只下载官网全量安装包、不执行安装。用来先看会装什么。 |
@@ -154,7 +155,7 @@ curl -X POST -H "Content-Type: application/json" \
 ## 依赖
 
 - **Windows**：`winget.exe`（Microsoft「应用安装程序 / App Installer」）。没装 winget 时插件仍能列出注册表里的应用，但无法判断是否有新版本。
-- **macOS**：`brew`（[Homebrew](https://brew.sh)）。没装 Homebrew 时明确报告引擎不可用，不会假装能更新。
+- **macOS**：无需额外依赖即可**列出**应用（直接读 `/Applications` 等目录里的 `.app`）；要判断并执行更新需要 `brew`（[Homebrew](https://brew.sh)）。没装 Homebrew 时会照常列出应用，并说明「安装 Homebrew 后可一键升级 cask 应用」。
 - 不需要任何第三方 npm 依赖；宿主半身只用 Node 内置模块，浏览器半身只用宿主提供的 `react`。
 
 ## 接口（宿主半身）
@@ -189,8 +190,9 @@ dsh plugin --profile <profile> add link:/path/to/dsh-app-updater
 ## 测试
 
 ```bash
-node test/unit.mjs              # 66 项：定宽表格解析、版本比较、清单与静默参数、系统/架构识别、Homebrew 解析
-node test/render.mjs            # 32 项：设置面板、演练提示、列宽拖拽、请求体
+node test/unit.mjs              # 152 项：定宽表格解析、版本比较、清单与静默参数、系统/架构识别、Homebrew 解析、macOS 应用枚举与 cask 匹配
+node test/render.mjs            # 44 项：设置面板（按平台）、演练提示、列宽拖拽、请求体
+node test/deny.mjs              # 12 项：无 connection 服务时逐路由验证默认拒绝
 node test/harness.mjs --scan    # 用假 cordis ctx + 真 HTTP 把宿主半身跑起来
 ```
 
@@ -201,7 +203,7 @@ node test/harness.mjs --scan    # 用假 cordis ctx + 真 HTTP 把宿主半身�
 | 系统 | 架构 | 更新引擎 | 说明 |
 |---|---|---|---|
 | Windows 10 / 11 | x64 / ARM64 / x86 | **winget** | 把识别到的架构传给 `winget --architecture`；清单没有该架构的包时自动退回自动匹配并记录日志 |
-| macOS 11+ | Apple Silicon / Intel | **Homebrew cask** | Homebrew 自己按本机架构取 cask；没有 Homebrew 时明确报告引擎不可用 |
+| macOS 11+ | Apple Silicon / Intel | **Homebrew cask** | 应用从 `/Applications` 等目录枚举，再按 cask 目录匹配；Homebrew 自己按本机架构取 cask。没装 Homebrew 时仍能列出应用，只是不能一键更新 |
 | 其它 | — | 无 | 扫描/更新接口返回 400 并说明原因 |
 
 识别结果会显示在状态行与设置面板的「运行环境」里，例如
@@ -219,8 +221,12 @@ UAC 为「始终通知」时每次安装会弹一次确认；把 DSH 本身以�
 Edge 走它自带的更新服务：winget 目录里的 `Microsoft.Edge` 是企业版 MSI，与本机消费版的
 安装技术不匹配（`0x8A15008E`），winget 会直接拒绝。
 
-> macOS 的 Homebrew 路径是按 Homebrew 官方 CLI 行为实现的，识别与解析逻辑有单测覆盖；
-> 但本插件主要在 Windows 上开发，macOS 上的安装/更新没有真机验证过，遇到问题请开 Issue。
+> macOS 的应用枚举（`/Applications` 等目录 + `Info.plist`）与 cask 匹配逻辑有单测覆盖，
+> 并用真实的 `formulae.brew.sh` 目录（7800+ cask）验证过匹配与去重；
+> 但本插件主要在 Windows 上开发，macOS 上的**安装/更新执行**没有真机验证过，遇到问题请开 Issue。
+>
+> macOS 上只枚举标准应用目录。应用如果装在别处（例如 `~/Desktop` 或自定义目录），
+> 本插件看不到它 —— 这不是漏扫，是扫描范围之外。
 
 ## 卸载
 

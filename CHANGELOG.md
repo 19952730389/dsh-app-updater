@@ -2,6 +2,49 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.2] — 2026-11-01
+
+### 修复
+
+- **macOS 上「未检测到任何已安装应用」**（用户实测报告）：1.3.0/1.3.1 的 macOS 扫描只执行
+  `brew list --cask --versions`，也就是**只有通过 Homebrew 装过的应用才会出现在列表里**。
+  一台正常使用的 Mac 上绝大多数应用是拖 DMG 装的，于是该命令返回空 → 界面显示「未检测到
+  任何已安装应用」，日志里是「Homebrew 报告 0 个已安装 cask 应用」。这不是「没有应用」，
+  而是**根本没有枚举应用**。现在（`lib/macos.js`）：
+  - 枚举标准应用目录里的 `.app`：`/Applications`、`/Applications/Utilities`、
+    `/System/Applications`（及其 `Utilities`）、`~/Applications`，用 `plutil` 读每个
+    bundle 的 `Info.plist` 取显示名与版本（读不到时退回 `defaults read`）；
+  - 抓取 Homebrew 的 cask 目录（`formulae.brew.sh/api/cask.json`，本地缓存 24 小时）把
+    `.app` 反查到 cask token，从而知道**官网最新版本**；
+  - 只有**确实由 Homebrew 管理**的应用才标记为可一键更新；其余应用如实列出并标注原因
+    （`not-managed` 非 Homebrew 管理 / `store-managed` 由 App Store 管理 /
+    `system-component` 系统组件），绝不假装能更新。
+- **同一个 `.app` 被多个 cask 声明时匹配错乱**：真实目录里 `iterm2` 与 `iterm2@nightly`
+  都声明 `iTerm.app`，旧写法「后写覆盖」会让匹配结果随目录顺序漂移（实测会把同一个应用
+  列出两次）。现在保留全部候选，由 `pickCask` 按「已装 > 非弃用/停用 > 主 token >
+  token 与应用名相等」挑选。
+- **没有 Homebrew 也能扫描**：`capabilitiesFor` 不再把「macOS 无 Homebrew」判成不可扫描 ——
+  应用照样列出来，只是无法判断/驱动更新，提示改为「安装 Homebrew 后可一键升级 cask 应用」。
+- **设置面板按平台显示**：macOS 上不再出现「自动提权安装」「下载失败时回退 winget」
+  「包含应用商店应用」（Windows 概念），改为 macOS 专属的「包含 App Store 应用」与
+  「包含非 Homebrew 应用」（新增设置项 `includeUnmanagedApps`，默认开启）。
+- **空状态文案分平台**：macOS 下列表为空时提示去看运行日志里的「枚举应用目录」记录，
+  而不是干巴巴一句「未检测到任何已安装应用」。
+
+### 新增
+
+- **`lib/macos.js`**：应用目录枚举、`Info.plist` 解析、cask 目录缓存与解析、cask 匹配、
+  列表合并（纯函数 `buildMacosItems` 便于单测）。
+- 日志更细：分别记录「枚举到多少个 .app」「Homebrew 报告多少个 cask」「读取 cask 目录结果」，
+  macOS 上再出现异常时一眼能看出断在哪一步。
+
+### 测试
+
+- `test/unit.mjs` 152 项（新增 macOS 应用枚举 20 项、同名 cask 挑选 6 项、cask 目录解析 6 项）；
+  用**真实** `formulae.brew.sh/api/cask.json`（7824 个 cask）验证过匹配与去重。
+- `test/render.mjs` 44 项（新增 macOS 设置面板 6 项、macOS 空状态文案 2 项）。
+- `test/deny.mjs` 12 项不变。
+
 ## [1.3.1] — 2026-11-01
 
 ### 安全
