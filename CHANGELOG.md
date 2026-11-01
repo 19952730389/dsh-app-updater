@@ -2,6 +2,53 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.3] — 2026-11-01
+
+针对 macOS 真实故障现场（macOS 27.2 / Apple M5 / Homebrew 7.0.11 / Node 24.21.0）的修复。
+1.3.2 之后扫描确实会枚举应用了，但当 **Homebrew 自身故障**或**cask 目录抓不下来**时，
+界面给出的仍然是「0 个可更新」这种「看起来一切正常」的结论 —— 本次把这两条沉默失败的路径
+改成明说，并把「白等两分钟」变成「一秒出结果」。
+
+### 修复
+
+- **Homebrew 命令失败被伪装成「0 个已安装应用」**（实测触发：brew 卡在 Portable Ruby 4.0.9
+  的 ghcr.io 下载并持有 `vendor-install-ruby` 锁，此后每条 `brew` 命令都立刻以
+  `lockf: 200: already locked` 失败）。旧代码不检查 `ok`，直接解析空 stdout，于是日志写
+  「Homebrew 报告 0 个已安装 cask」，真正的错误躺在 stderr 里被丢弃 —— 用户看到的是
+  「本机没装任何应用」。现在（`lib/engine.js`）：
+  - `brew list --cask --versions` / `brew outdated` 失败时写入扫描警告 + 警告日志，并给出可执行
+    的排查提示（「先在终端执行 `brew list --cask` 检查 Homebrew 是否正常」）；
+  - 这两条命令的超时放宽到 5 / 10 分钟（慢网络下 brew 首次运行可能真的很慢），
+    `brew --version` 放宽到 60 秒。
+- **cask 目录在国内网络下必然抓不到**（`formulae.brew.sh/api/cask.json` 有 19 MB，实测
+  25 KB/s，120 秒只下到 0.39 MB）。旧实现单源单次 120 秒，于是每次扫描白等两分钟后
+  `catalog = null`，所有应用都算不出「可更新」。现在（`lib/macos.js`）：
+  - 官方地址 + 清华 TUNA / 中科大 USTC / 阿里云三个镜像 **并发竞速**（`Promise.any`），
+    谁先返回用谁，其余立刻 `abort()` 取消；官方仍参与竞速，网络正常时优先用官方数据；
+  - 单地址限时 60 秒（原 120 秒）；
+  - 全部失败时回退到 **30 天内的过期缓存**兜底（`readCatalogCache` 新增 `allowStale`），
+    宁可略旧，也好过整屏「无法判断是否有新版本」；顺带拒绝空数组缓存。
+  - 实测：冷启动（无缓存）62 秒 → 42 秒；有缓存时 0.7 秒。
+- **扫描警告在界面上不可见**：`state.scan.warnings` 之前只写进 state 与运行日志。目录抓不到时
+  用户只看到「0 个可更新」，完全不知道判断依据已经失效。现在（`lib/client.js`）检测完成后若有
+  警告，在状态行下方显示红色横幅（复用 `.appupd-banner-warn`）取第一条，多条可展开「查看全部」。
+
+### 测试
+
+- **修掉一条环境相关的既有失败断言**：`findBrew` 在 `HOMEBREW_PREFIX` 之外还会探测
+  `/opt/homebrew`、`/usr/local`、`/home/linuxbrew` 等默认位置，因此「装了 Homebrew 的机器」
+  上旧断言 `=== null` 必然失败 —— 1.3.2 发布状态下在真实 Mac 上 `npm test` 是 **151/152**。
+  现在改成跨平台的存在性断言（覆盖 Apple Silicon / Intel / Linuxbrew 三处默认前缀）。
+- 全量：`node test/unit.mjs` **152/152**、`node test/render.mjs` **44/44**、
+  `node test/deny.mjs` **12/12**。修完在真实机器上全量扫描：110 个应用、33 个对上 cask、
+  0 条警告、耗时 0.7 秒。
+
+### 说明
+
+- 「0 个可更新」在部分机器上仍然**是正确的**：插件只对 Homebrew 管理的应用提供一键更新，
+  拖 DMG / 手动装的应用只列出并标 `not-managed`。想让某个应用变成可一键更新，可以用
+  `brew install --cask --adopt <token>` 收编（接管现有 `.app`，不重装）。
+
 ## [1.3.2] — 2026-11-01
 
 ### 修复

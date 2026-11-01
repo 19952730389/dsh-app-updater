@@ -221,6 +221,10 @@ node test/deny.mjs     # 12 checks: deny-by-default per route when the host has 
 node test/harness.mjs --scan   # boots the host half against a fake cordis ctx + real HTTP
 ```
 
+> The tests do not depend on whether Homebrew is installed locally: the `findBrew` assertion checks
+> existence across the three default prefixes (Apple Silicon / Intel / Linuxbrew), so it stays green
+> on a real Mac (1.3.2 and earlier hard-coded `=== null` and was always red there; fixed in 1.3.3).
+
 ## Layout
 
 | File | Purpose |

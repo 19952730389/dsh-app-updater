@@ -85,6 +85,22 @@ dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/rele
 | 版本未知 | 应用当前版本读不出来（winget 显示 `Unknown`），仍然允许尝试更新。 |
 | 系统组件 | 系统组件/运行时，默认不建议由第三方驱动更新。 |
 
+### 为什么可能是「0 个可更新」
+
+插件**只对 Homebrew 管理的应用提供一键更新**：应用从 `/Applications` 等目录枚举出来，
+再按 cask 目录反查「它是不是 brew 装的」——拖 DMG / 手动装的应用会如实列出并标
+**非 Homebrew 管理**，不会被算成可更新。所以一台全是拖装应用的 Mac 上，「0 个可更新」是**正确结论**。
+
+想把某个应用变成可一键更新，用 `--adopt` 把它收编进 Homebrew（接管现有 `.app`，不重装）：
+
+```bash
+brew install --cask --adopt iina            # 例：本机 1.4.4，cask 已到 1.5.0
+brew install --cask --adopt google-chrome
+```
+
+如果状态行下方出现**红色警告横幅**，说明这次扫描的**判断依据本身失效**了（Homebrew 命令失败，
+或 cask 目录抓不下来），此时「0 个可更新」不代表应用都是最新 —— 横幅里有具体原因与下一步。
+
 ---
 
 ## 设置项
@@ -156,6 +172,8 @@ curl -X POST -H "Content-Type: application/json" \
 
 - **Windows**：`winget.exe`（Microsoft「应用安装程序 / App Installer」）。没装 winget 时插件仍能列出注册表里的应用，但无法判断是否有新版本。
 - **macOS**：无需额外依赖即可**列出**应用（直接读 `/Applications` 等目录里的 `.app`）；要判断并执行更新需要 `brew`（[Homebrew](https://brew.sh)）。没装 Homebrew 时会照常列出应用，并说明「安装 Homebrew 后可一键升级 cask 应用」。
+  cask 目录（19 MB）走**官方 + 清华 / 中科大 / 阿里云镜像并发竞速**，单地址限时 60 秒，
+  全部失败时回退 30 天内的过期缓存；抓不到目录会在界面上给出红色警告横幅，而不是假装「无更新」。
 - 不需要任何第三方 npm 依赖；宿主半身只用 Node 内置模块，浏览器半身只用宿主提供的 `react`。
 
 ## 接口（宿主半身）
@@ -195,6 +213,10 @@ node test/render.mjs            # 44 项：设置面板（按平台）、演练�
 node test/deny.mjs              # 12 项：无 connection 服务时逐路由验证默认拒绝
 node test/harness.mjs --scan    # 用假 cordis ctx + 真 HTTP 把宿主半身跑起来
 ```
+
+> 测试不依赖本机是否装了 Homebrew：`findBrew` 的断言按「存在性」覆盖 Apple Silicon /
+> Intel / Linuxbrew 三处默认前缀（1.3.2 及以前这条断言写死 `=== null`，在真实 Mac 上恒红，
+> 1.3.3 已修正）。
 
 ## 支持的系统与架构
 
