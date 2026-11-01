@@ -254,7 +254,15 @@ ok(versions.size === 2, "无版本的行被忽略", versions.size);
 const outdated = parseBrewOutdated(JSON.stringify({ casks: [{ name: "visual-studio-code", current_version: "1.95.0" }, { name: "iterm2", current_version: "3.5.10" }] }));
 ok(outdated.get("visual-studio-code") === "1.95.0" && outdated.get("iterm2") === "3.5.10", "解析可升级 cask", [...outdated]);
 ok(parseBrewOutdated("not json").size === 0, "坏 JSON 不抛错");
-ok(findBrew({ HOMEBREW_PREFIX: "/nonexistent-prefix-for-test" }) === null, "找不到 brew 时返回 null");
+// 注意：findBrew 在 HOMEBREW_PREFIX 之外还会尝试 /opt/homebrew、/usr/local 等默认位置，
+// 所以「本机真的没装 brew」时才能断言 null。装了 brew 的机器上这里必须按存在性断言，
+// 否则测试会随运行环境飘（旧写法在任何装有 Homebrew 的 Mac 上都会红）。
+const brewWithoutPrefix = findBrew({ HOMEBREW_PREFIX: "/nonexistent-prefix-for-test" });
+ok(
+  brewWithoutPrefix === null || brewWithoutPrefix === "/opt/homebrew/bin/brew" || brewWithoutPrefix === "/usr/local/bin/brew",
+  "找不到 brew 时返回 null（本机装了 Homebrew 时退回默认前缀）",
+  brewWithoutPrefix
+);
 
 /* ---------------- macOS 应用枚举（本次修复的核心） ---------------- */
 group("macOS 应用枚举");
