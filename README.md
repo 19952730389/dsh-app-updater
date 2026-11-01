@@ -113,14 +113,32 @@ curl -X POST -H "Content-Type: application/json" \
 `downloadDir` 会被校验：必须留空（用默认目录）或是绝对路径（`D:\Apps`）／UNC 路径（`\\server\share`），
 否则返回 `400` 并在面板里显示红字提示，不会把安装包写到意料之外的位置。
 
+> 这些路由**默认拒绝**：请求必须通过宿主的 `connection` 准入（浏览器里就是带上 DSH 页面的会话
+> Cookie），或在**没有 `connection` 服务的旧宿主**上由你显式开启兼容模式（见「安全边界」）。
+> 仅凭「来自 127.0.0.1」不再放行 —— 1.3.1 已把这条路径改成默认拒绝。
+
 ---
 
 ## 安全边界
 
-- **接入宿主 connection 准入**：每个请求先过 `ctx.connection.admit(request)` —— DSH 用来做
+- **路由默认拒绝**：每个请求先过 `ctx.connection.admit(request)` —— DSH 用来做
   Host/Origin 信任校验与浏览器会话 / API 认证的那套边界（宿主自己的 `/api` 路由用的就是它），
-  未通过的请求直接得到 `401`/`403`。宿主没有 `connection` 服务、或请求不带任何连接凭据且来自
-  回环地址时，退回旧的「回环」规则，并在响应头标注 `X-DSH-Admission: loopback-legacy`。
+  未通过的请求直接得到 `401` / `403` / `409`，响应头带 `X-DSH-Admission: denied`。
+- **兼容模式默认关闭**（1.3.1 起）：宿主没有 `connection` 服务时**不再**「仅凭回环地址放行」，
+  一律 `403`。旧宿主上确实需要时，必须由你**显式**开启，二选一：
+  - 插件配置（`cordis.patch.yml` 里覆盖同名条目）：
+
+    ```yaml
+    - id: dsh-app-updater
+      config:
+        allowLegacyLoopback: true
+    ```
+
+  - 或启动 DSH 前设置环境变量 `DSH_APP_UPDATER_ALLOW_LEGACY_LOOPBACK=1`。
+
+  开启后：放行的回环请求带 `X-DSH-Admission: loopback-legacy-optin` 与
+  `X-DSH-Admission-Warning`，`state.json` / `health.json` 的 `admission` 字段会标明
+  `mode: "loopback-legacy-optin"`，设置页顶部也会出现红色提示条；日志里记一条 `warn`。
 - **写操作还要显式确认**：`scan` / `update` / `cancel` / `settings` / `open-downloads` 必须带 `confirm:true`。
 - **不猜测静默参数**：优先用发布方在清单里声明的 `Silent` 参数；清单缺失时才按安装包类型用保守的默认开关。
 - **需要管理员时自动提权**：机器级安装包（MSI、写入 `Program Files`）交给

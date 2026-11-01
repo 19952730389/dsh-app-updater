@@ -41,10 +41,14 @@ dsh-app-updater/
 
 全部 `kind: "exact"`，前缀 `/dsh-app-updater/`。每个请求先过 **connection 准入**：
 `ctx.connection.admit(req)`（DSH 的 Host/Origin 信任校验 + 浏览器会话 / API 认证，
-宿主自己的 `/api` 路由用的同一套），被拒即返回 `401`（未认证）/ `403`（不可信来源）；
-写操作再要求 `confirm: true`。
-宿主没有 `connection` 服务、或请求不带任何连接凭据且来自回环地址时，退回旧的「回环」检查，
-并在响应头标注 `X-DSH-Admission: loopback-legacy`（`lib/index.js` 的 `admissionGate`）。
+宿主自己的 `/api` 路由用的同一套），被拒即返回 `401`（未认证）/ `403`（不可信来源）/
+`409`（连接被占用），响应头带 `X-DSH-Admission: denied`；写操作再要求 `confirm: true`。
+
+**默认拒绝**（1.3.1 起）：宿主没有 `connection` 服务时不再「仅凭回环地址放行」，而是 `403`。
+只有用户显式开启兼容模式（插件配置 `allowLegacyLoopback: true` 或环境变量
+`DSH_APP_UPDATER_ALLOW_LEGACY_LOOPBACK=1`）时，回环请求才放行，并带
+`X-DSH-Admission: loopback-legacy-optin` 与 `X-DSH-Admission-Warning`（见 `lib/index.js` 的
+`admissionGate` / `resolveLegacyLoopbackOptIn`）。
 
 ### GET /dsh-app-updater/state.json
 
@@ -62,7 +66,9 @@ dsh-app-updater/
   "update": { "running": false, "total": 0, "done": 0, "current": null, "error": null },
   "apps": { "scannedAt": 0, "stats": { "total": 0, "upgradable": 0, "unsupported": 0 }, "items": [], "engine": "winget" },
   "log": [ { "at": 0, "level": "info|warn|error|success", "text": "..." } ],
-  "settings": { "includeStoreApps": true, "includeRegistryOnly": true, "downloadDir": "", "keepInstallers": true, "hashFallbackUpgrade": true, "dryRun": false, "matchSystemArch": true, "autoElevate": true }
+  "settings": { "includeStoreApps": true, "includeRegistryOnly": true, "downloadDir": "", "keepInstallers": true, "hashFallbackUpgrade": true, "dryRun": false, "matchSystemArch": true, "autoElevate": true },
+  // 准入现状，供界面与复核确认当前走哪条路径（默认 "deny" 不会出现在能读到响应的地方）
+  "admission": { "mode": "connection|connection+loopback-legacy|loopback-legacy-optin|deny", "service": true, "allowLegacyLoopback": false, "warning": null }
 }
 ```
 

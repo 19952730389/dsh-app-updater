@@ -110,8 +110,25 @@ curl -X POST -H "Content-Type: application/json" \
 
 ## Safety boundaries
 
-- **Every write requires loopback + explicit confirmation**: `scan` / `update` / `cancel` /
-  `settings` / `open-downloads` accept only requests from loopback with `confirm:true`.
+- **Every route is deny-by-default**: each request first goes through `ctx.connection.admit(request)`
+  — DSH's Host/Origin fence plus browser-session / API authentication, the same gate the host uses for
+  its own `/api` routes. Rejected requests get `401` / `403` / `409` with `X-DSH-Admission: denied`.
+- **Legacy loopback mode is off by default** (since 1.3.1): when the host has no `connection`
+  service, requests are no longer trusted just because they come from loopback — they get `403`.
+  If you really need it on an old host, opt in explicitly, either via plugin config:
+
+  ```yaml
+  - id: dsh-app-updater
+    config:
+      allowLegacyLoopback: true
+  ```
+
+  or by exporting `DSH_APP_UPDATER_ALLOW_LEGACY_LOOPBACK=1` before starting DSH. Once enabled, allowed
+  requests carry `X-DSH-Admission: loopback-legacy-optin` and `X-DSH-Admission-Warning`, the
+  `admission` field in `state.json` / `health.json` reports `mode: "loopback-legacy-optin"`, the
+  settings page shows a red banner, and a `warn` line is written to the log.
+- **Every write still requires explicit confirmation**: `scan` / `update` / `cancel` /
+  `settings` / `open-downloads` require `confirm:true`.
 - **No guessed silent switches**: the publisher's declared `Silent` switches are preferred;
   generic defaults are used only when a manifest is unavailable.
 - **Elevation only for installs, and on demand**: install commands that need administrator rights

@@ -11,6 +11,9 @@ import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
 process.env.DSH_HOME = process.env.DSH_HOME || join(here, "..", ".test-home");
+// 这个假 ctx 没有 connection 服务，等价于旧宿主：默认拒绝下路由一律 403。
+// 所以自测里显式开启兼容模式（与用户在旧宿主上手动开启走的是同一段代码）。
+process.env.DSH_APP_UPDATER_ALLOW_LEGACY_LOOPBACK = "1";
 
 const plugin = (await import("../lib/index.js")).default;
 

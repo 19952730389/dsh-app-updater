@@ -394,6 +394,26 @@ await tick();
 tree = rt.render();
 ok(byClass(tree, "appupd-banner").length === 0, "关闭演练模式后警示条消失（宿主回读 state）");
 
+group("兼容模式（仅回环放行）警示条");
+statePayload = baseState({ admission: { mode: "loopback-legacy-optin", service: false, allowLegacyLoopback: true, warning: null } });
+rt.reset();
+await tick();
+tree = rt.render();
+await tick();
+tree = rt.render();
+ok(byClass(tree, "appupd-banner").length === 1, "兼容模式开启时显示警示条", byClass(tree, "appupd-banner").length);
+ok(byClass(tree, "appupd-banner-warn").length === 1, "兼容模式警示条用警示样式");
+ok(textOf(byClass(tree, "appupd-banner")[0]).includes("兼容模式已开启"), "警示条文案包含「兼容模式已开启」");
+
+statePayload = baseState({ admission: { mode: "deny", service: false, allowLegacyLoopback: false, warning: null } });
+rt.reset();
+await tick();
+tree = rt.render();
+await tick();
+tree = rt.render();
+ok(byClass(tree, "appupd-banner").length === 0, "默认（未开启兼容模式）不显示任何警示条");
+statePayload = baseState();
+
 group("下载目录校验");
 calls.length = 0;
 statePayload = baseState();

@@ -2,6 +2,38 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.1] — 2026-11-01
+
+### 安全
+
+- **「仅凭回环地址放行」改为默认拒绝**（插件市场 dshopen.org 对 1.3.0 的复核意见）：
+  1.3.0 接入 `connection` 准入后仍留了一条退回路径 —— 宿主没有 `connection` 服务，或请求
+  不带任何连接凭据且来自回环地址时，直接按「本机信任」放行。在没有准入服务的旧宿主上，
+  任何本机进程（以及能向回环发起请求的页面）都能借此调用 `/update`、`/settings` 等安装接口，
+  等于绕过认证。1.3.1 起这条路径**默认关闭**：
+  - 宿主有 `connection`：一律以 `admit()` 的结果为准，`401` / `403` / `409` 原样返回
+    （响应头 `X-DSH-Admission: denied`）。只有「401 + 回环 + 无凭据 + 用户显式开启兼容模式」
+    这一种例外，且必须在下面第 2 条的前提下才成立。
+  - 宿主没有 `connection`：**默认 403**，不再自动相信回环地址。
+- **兼容模式必须由用户显式开启**（保留给确实跑在旧宿主上的用户）：插件配置
+  `allowLegacyLoopback: true`（`cordis.patch.yml` 覆盖同名条目）或环境变量
+  `DSH_APP_UPDATER_ALLOW_LEGACY_LOOPBACK=1`，两者默认都没有。开启后：
+  - 放行的请求带 `X-DSH-Admission: loopback-legacy-optin` 与 `X-DSH-Admission-Warning`；
+  - `state.json` / `health.json` 新增 `admission` 字段（`mode` / `service` /
+    `allowLegacyLoopback` / `warning`），复核时不必读代码就能确认当前路径；
+  - 设置页顶部显示红色警示条，日志写一条 `warn`。
+- **准入拒绝统一返回 JSON**：`401`/`403`/`409` 带 `{ ok:false, error, admission:"denied" }`，
+  不再用纯文本，排障时能直接看出是被准入挡掉的。
+
+### 测试
+
+- `test/unit.mjs`：准入用例从 6 项扩到 25 项，覆盖兼容模式开关（配置 / 环境变量 / 缺省关闭）、
+  无 `connection` 服务默认拒绝、显式开启后放行、非回环仍拒绝、`409`、带凭据未认证不放行等。
+- 新增 `test/deny.mjs`：起真实 HTTP 服务，验证无 `connection` 且未开兼容模式时**每一条路由**
+  都是 `403 + X-DSH-Admission: denied`；再验证显式开启后放行并标注 opt-in 响应头。
+- `test/render.mjs`：新增兼容模式警示条 4 项（开启显示、样式、文案、默认不显示）。
+- 自测命令更新为 `node test/unit.mjs && node test/render.mjs && node test/deny.mjs`。
+
 ## [1.3.0] — 2026-10-31
 
 ### 修复

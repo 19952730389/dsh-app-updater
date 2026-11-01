@@ -20,7 +20,7 @@ import {
 import { compareVersions, isNewer, looksLikeVersion, splitVersion } from "../lib/version.js";
 import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs, parseBrewCaskVersions, parseBrewOutdated, findBrew, isArchNotFoundError, explainInstallerExitCode, evaluateUpdateResult, findEdgeUpdate, updateHintFor } from "../lib/engine.js";
 import { psQuote, ELEVATION_CANCELLED } from "../lib/elevate.js";
-import { admissionGate, hasConnectionCredentials } from "../lib/index.js";
+import { admissionGate, hasConnectionCredentials, resolveLegacyLoopbackOptIn, LEGACY_LOOPBACK_ENV } from "../lib/index.js";
 import {
   detectEnvironment,
   describeEnvironment,
@@ -300,15 +300,52 @@ function fakeReq({ loopback = true, headers = {} } = {}) {
   return { socket: { remoteAddress: loopback ? "127.0.0.1" : "10.0.0.5" }, headers };
 }
 
-group("connection 准入（市场审核要求）");
+group("connection 准入（市场审核要求：默认拒绝）");
 ok(hasConnectionCredentials({ headers: { cookie: "dsh=x" } }) === true, "识别浏览器会话 Cookie");
 ok(hasConnectionCredentials({ headers: { authorization: "Bearer x" } }) === true, "识别 API Cookie/Authorization");
 ok(hasConnectionCredentials({ headers: {} }) === false, "没有凭据时返回 false");
-ok(admissionGate(fakeReq(), fakeRes(), null) === true, "宿主没有 connection 服务时，回环请求放行");
+
+/* --- 兼容模式开关：默认关闭，必须是显式动作 --- */
+ok(resolveLegacyLoopbackOptIn(undefined, {}) === false, "没有任何显式开关 → 兼容模式关闭");
+ok(resolveLegacyLoopbackOptIn(null, {}) === false, "配置为 null → 兼容模式关闭");
+ok(resolveLegacyLoopbackOptIn({}, {}) === false, "配置里没有该字段 → 兼容模式关闭");
+ok(resolveLegacyLoopbackOptIn({ allowLegacyLoopback: false }, {}) === false, "配置显式 false → 关闭");
+ok(resolveLegacyLoopbackOptIn({ allowLegacyLoopback: true }, {}) === true, "插件配置 allowLegacyLoopback:true → 开启");
+ok(resolveLegacyLoopbackOptIn(undefined, { [LEGACY_LOOPBACK_ENV]: "1" }) === true, "环境变量 =1 → 开启");
+ok(resolveLegacyLoopbackOptIn(undefined, { [LEGACY_LOOPBACK_ENV]: "true" }) === true, "环境变量 =true → 开启");
+ok(resolveLegacyLoopbackOptIn(undefined, { [LEGACY_LOOPBACK_ENV]: "0" }) === false, "环境变量 =0 → 关闭");
+ok(resolveLegacyLoopbackOptIn(undefined, { [LEGACY_LOOPBACK_ENV]: "off" }) === false, "环境变量 =off → 关闭");
+
+/* --- 宿主没有 connection 服务：默认拒绝，只有显式开启兼容模式才放行 --- */
+{
+  const res = fakeRes();
+  ok(
+    admissionGate(fakeReq(), res, null) === false && res.statusCode === 403 && res.headers["X-DSH-Admission"] === "denied",
+    "没有 connection 服务 + 回环 + 未开兼容模式 → 403（默认拒绝）"
+  );
+}
 {
   const res = fakeRes();
   ok(admissionGate(fakeReq({ loopback: false }), res, null) === false && res.statusCode === 403, "没有 connection 服务时，非回环请求 403");
 }
+{
+  const res = fakeRes();
+  ok(
+    admissionGate(fakeReq(), res, null, { allowLegacyLoopback: true }) === true &&
+      res.headers["X-DSH-Admission"] === "loopback-legacy-optin" &&
+      res.headers["X-DSH-Admission-Warning"] === "legacy-loopback-compatibility-enabled",
+    "显式开启兼容模式 + 回环 → 放行并标注 opt-in 响应头"
+  );
+}
+{
+  const res = fakeRes();
+  ok(
+    admissionGate(fakeReq({ loopback: false }), res, null, { allowLegacyLoopback: true }) === false && res.statusCode === 403,
+    "即使开启兼容模式，非回环请求仍然 403"
+  );
+}
+
+/* --- 宿主有 connection 服务：一律以 admit() 为准 --- */
 {
   const res = fakeRes();
   const connection = { admit: () => ({ peer: { id: "peer-1" } }) };
@@ -316,8 +353,23 @@ ok(admissionGate(fakeReq(), fakeRes(), null) === true, "宿主没有 connection 
 }
 {
   const res = fakeRes();
+  const connection = { admit: () => undefined };
+  ok(admissionGate(fakeReq(), res, connection) === false && res.statusCode === 500, "准入返回空值 → 500（不把看不懂的结果放行）");
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ rejection: "401" }) };
+  ok(admissionGate(fakeReq(), res, connection) === false && res.statusCode === 403, "准入返回非数字拒绝码 → 403（fail-closed）");
+}
+{
+  const res = fakeRes();
   const connection = { admit: () => ({ rejection: 403 }) };
   ok(admissionGate(fakeReq({ loopback: false }), res, connection) === false && res.statusCode === 403, "准入拒绝 403（不可信来源）→ 403");
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ rejection: 409 }) };
+  ok(admissionGate(fakeReq(), res, connection) === false && res.statusCode === 409, "准入拒绝 409（连接被占用）→ 409");
 }
 {
   const res = fakeRes();
@@ -328,8 +380,34 @@ ok(admissionGate(fakeReq(), fakeRes(), null) === true, "宿主没有 connection 
   const res = fakeRes();
   const connection = { admit: () => ({ rejection: 401 }) };
   ok(
-    admissionGate(fakeReq(), res, connection) === true && res.headers["X-DSH-Admission"] === "loopback-legacy",
-    "无凭据的回环请求退回旧规则并标注响应头"
+    admissionGate(fakeReq({ headers: { cookie: "dsh=x" } }), res, connection, { allowLegacyLoopback: true }) === false &&
+      res.statusCode === 401,
+    "带凭据未认证时，兼容模式也不放行"
+  );
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ rejection: 401 }) };
+  ok(
+    admissionGate(fakeReq(), res, connection) === false && res.statusCode === 401 && res.headers["X-DSH-Admission"] === "denied",
+    "无凭据的回环请求默认拒绝（不再退回回环信任）"
+  );
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ rejection: 401 }) };
+  ok(
+    admissionGate(fakeReq(), res, connection, { allowLegacyLoopback: true }) === true &&
+      res.headers["X-DSH-Admission"] === "loopback-legacy-optin",
+    "显式开启兼容模式后，无凭据的回环请求才按旧规则放行"
+  );
+}
+{
+  const res = fakeRes();
+  const connection = { admit: () => ({ rejection: 401 }) };
+  ok(
+    admissionGate(fakeReq({ loopback: false }), res, connection, { allowLegacyLoopback: true }) === false && res.statusCode === 401,
+    "兼容模式的例外只覆盖回环地址，非回环仍然 401"
   );
 }
 {
