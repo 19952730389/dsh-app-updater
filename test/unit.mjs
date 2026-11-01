@@ -5,9 +5,10 @@
  * 运行：node test/unit.mjs
  */
 
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync, mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 
 import {
   parseInstalledList,
@@ -254,14 +255,43 @@ ok(versions.size === 2, "无版本的行被忽略", versions.size);
 const outdated = parseBrewOutdated(JSON.stringify({ casks: [{ name: "visual-studio-code", current_version: "1.95.0" }, { name: "iterm2", current_version: "3.5.10" }] }));
 ok(outdated.get("visual-studio-code") === "1.95.0" && outdated.get("iterm2") === "3.5.10", "解析可升级 cask", [...outdated]);
 ok(parseBrewOutdated("not json").size === 0, "坏 JSON 不抛错");
-// 注意：findBrew 在 HOMEBREW_PREFIX 之外还会尝试 /opt/homebrew、/usr/local 等默认位置，
-// 所以「本机真的没装 brew」时才能断言 null。装了 brew 的机器上这里必须按存在性断言，
-// 否则测试会随运行环境飘（旧写法在任何装有 Homebrew 的 Mac 上都会红）。
-const brewWithoutPrefix = findBrew({ HOMEBREW_PREFIX: "/nonexistent-prefix-for-test" });
+/*
+ * findBrew 的不变量：只返回**真实存在**的 brew 文件。
+ *
+ * 不能断言 `=== null`：findBrew 在 HOMEBREW_PREFIX 之外还会探测 /opt/homebrew、
+ * /usr/local、/home/linuxbrew 以及 $PATH 里的每一项，所以在任何装了 Homebrew 的
+ * Mac 上它必然返回某个路径 —— 旧断言（1.3.2 及以前）因此在真实机器上恒红。
+ *
+ * 也不能只把返回值糊进一个白名单：那只是换个方式写死环境。这里改为用临时目录
+ * 构造「有 brew」与「没有 brew」两种确定场景，跨平台（Windows 也能跑）验证
+ * 「候选路径存在才返回、不存在就继续找/返回 null」这条真正的规则。
+ */
+const brewOk = (() => {
+  const root = mkdtempSync(join(tmpdir(), "dsh-findbrew-"));
+  try {
+    mkdirSync(join(root, "bin"), { recursive: true });
+    writeFileSync(join(root, "bin", "brew"), "", "utf8");
+    const found = findBrew({ HOMEBREW_PREFIX: root, PATH: "" });
+    return found !== null && existsSync(found) && basename(found) === "brew";
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+})();
+ok(brewOk, "HOMEBREW_PREFIX 下有 brew 时返回该文件的绝对路径且文件真实存在");
+
+const brewNoPrefix = (() => {
+  const root = mkdtempSync(join(tmpdir(), "dsh-findbrew-empty-"));
+  try {
+    // 空目录：这个前缀下没有 brew，PATH 也清空，默认前缀在这台机器上是否存在都不影响结论
+    return findBrew({ HOMEBREW_PREFIX: root, PATH: "" });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+})();
 ok(
-  brewWithoutPrefix === null || brewWithoutPrefix === "/opt/homebrew/bin/brew" || brewWithoutPrefix === "/usr/local/bin/brew",
-  "找不到 brew 时返回 null（本机装了 Homebrew 时退回默认前缀）",
-  brewWithoutPrefix
+  brewNoPrefix === null || (existsSync(brewNoPrefix) && basename(brewNoPrefix) === "brew"),
+  "前缀下没有 brew 时不会凭空返回路径（装了 Homebrew 的机器上退回真实存在的默认前缀）",
+  brewNoPrefix
 );
 
 /* ---------------- macOS 应用枚举（本次修复的核心） ---------------- */

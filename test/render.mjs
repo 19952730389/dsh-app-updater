@@ -466,6 +466,49 @@ tree = rt.render();
 await tick();
 tree = rt.render();
 ok(byClass(tree, "appupd-banner").length === 0, "默认（未开启兼容模式）不显示任何警示条");
+
+/* 扫描警告横幅：只该为「判断依据失效」出现，不能把日常说明也画成红条 */
+group("扫描警告横幅");
+async function renderWith(overrides) {
+  statePayload = baseState(overrides);
+  rt.reset();
+  await tick();
+  tree = rt.render();
+  await tick();
+  return rt.render();
+}
+
+tree = await renderWith({ scan: { running: false, startedAt: 0, finishedAt: 0, error: null, warnings: [] } });
+ok(byClass(tree, "appupd-banner-warn").length === 0, "没有警告时不出红条（日常提示不该常驻）");
+
+tree = await renderWith({
+  scan: { running: false, startedAt: 0, finishedAt: 0, error: null, warnings: ["读取 Homebrew cask 目录失败：超时"] },
+});
+const warnBanners = byClass(tree, "appupd-banner-warn");
+ok(warnBanners.length === 1, "有扫描警告时出 1 条红条", warnBanners.length);
+ok(textOf(warnBanners[0]).includes("读取 Homebrew cask 目录失败"), "红条显示第一条警告的正文");
+
+tree = await renderWith({
+  scan: { running: false, startedAt: 0, finishedAt: 0, error: null, warnings: ["第一条故障", "第二条故障"] },
+});
+const many = byClass(tree, "appupd-banner-warn")[0];
+ok(textOf(many).includes("2 条警告") && textOf(many).includes("查看全部"), "多条警告时显示条数并可展开查看全部");
+
+tree = await renderWith({
+  phase: "scanning",
+  scan: { running: true, startedAt: Date.now(), finishedAt: 0, error: null, warnings: ["扫描中不该刷屏"] },
+});
+ok(byClass(tree, "appupd-banner-warn").length === 0, "扫描进行中不显示警告横幅（避免闪烁）");
+
+/* 整体失败：以前只写 state，界面什么也不显示 */
+tree = await renderWith({ scan: { running: false, startedAt: 0, finishedAt: Date.now(), error: "枚举应用目录失败", warnings: [] } });
+const errBanner = byClass(tree, "appupd-banner-warn");
+ok(errBanner.length === 1 && textOf(errBanner[0]).includes("枚举应用目录失败"), "扫描整体失败时界面必须显示原因", errBanner.length && textOf(errBanner[0]));
+
+/* 非字符串的 warning 不能把渲染搞崩 */
+tree = await renderWith({ scan: { running: false, startedAt: 0, finishedAt: 0, error: null, warnings: [null, 42, ""] } });
+ok(byClass(tree, "appupd-banner-warn").length === 0, "warnings 里混入非字符串/空值时不出红条也不崩");
+
 statePayload = baseState();
 
 group("下载目录校验");

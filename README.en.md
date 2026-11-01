@@ -215,8 +215,8 @@ Then add `dsh-app-updater` to `dsh.profile.bundles` in the profile's `package.js
 ## Tests
 
 ```bash
-node test/unit.mjs     # 152 checks: table parsing, version compare, manifest & switches, OS/arch detection, Homebrew parsing, macOS app enumeration & cask matching
-node test/render.mjs   # 44 checks: settings panel (per platform), rehearsal banner, column drag, request bodies
+node test/unit.mjs     # 153 checks: table parsing, version compare, manifest & switches, OS/arch detection, Homebrew parsing, macOS app enumeration & cask matching
+node test/render.mjs   # 51 checks: settings panel (per platform), rehearsal banner, scan-warning banner, column drag, request bodies
 node test/deny.mjs     # 12 checks: deny-by-default per route when the host has no connection service
 node test/harness.mjs --scan   # boots the host half against a fake cordis ctx + real HTTP
 ```

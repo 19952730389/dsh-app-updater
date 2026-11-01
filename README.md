@@ -208,8 +208,8 @@ dsh plugin --profile <profile> add link:/path/to/dsh-app-updater
 ## 测试
 
 ```bash
-node test/unit.mjs              # 152 项：定宽表格解析、版本比较、清单与静默参数、系统/架构识别、Homebrew 解析、macOS 应用枚举与 cask 匹配
-node test/render.mjs            # 44 项：设置面板（按平台）、演练提示、列宽拖拽、请求体
+node test/unit.mjs              # 153 项：定宽表格解析、版本比较、清单与静默参数、系统/架构识别、Homebrew 解析、macOS 应用枚举与 cask 匹配
+node test/render.mjs            # 51 项：设置面板（按平台）、演练提示、扫描警告横幅、列宽拖拽、请求体
 node test/deny.mjs              # 12 项：无 connection 服务时逐路由验证默认拒绝
 node test/harness.mjs --scan    # 用假 cordis ctx + 真 HTTP 把宿主半身跑起来
 ```
