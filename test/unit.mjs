@@ -28,7 +28,7 @@ import {
   normalizeAppKey,
   buildMacosItems,
 } from "../lib/macos.js";
-import { admissionGate, hasConnectionCredentials, resolveLegacyLoopbackOptIn, LEGACY_LOOPBACK_ENV } from "../lib/index.js";
+import { admissionGate, hasConnectionCredentials, resolveLegacyLoopbackOptIn, isCrossSiteBrowserRequest, LEGACY_LOOPBACK_ENV } from "../lib/index.js";
 import {
   detectEnvironment,
   describeEnvironment,
@@ -618,6 +618,64 @@ ok(resolveLegacyLoopbackOptIn(undefined, { [LEGACY_LOOPBACK_ENV]: "off" }) === f
   const skip = await verifyInstallerHash(file, {}, "", () => {});
   ok(skip.ok === true && skip.skipped === true, "清单没有可配对哈希 → 跳过而不是失败");
   rmSync(dir, { recursive: true, force: true });
+}
+
+/* ---------------- 1.3.5 第二批回归：来源围栏 / 归一化 / 双语匹配 ---------------- */
+{
+  const base = { host: "127.0.0.1:7202" };
+  ok(isCrossSiteBrowserRequest(fakeReq({ headers: {} })) === false, "无 Origin/Referer（本机脚本 / IPC 桥）不算跨站");
+  ok(isCrossSiteBrowserRequest(fakeReq({ headers: { ...base, origin: "http://127.0.0.1:7202" } })) === false, "同源 Origin 放行");
+  ok(isCrossSiteBrowserRequest(fakeReq({ headers: { ...base, origin: "http://evil.example" } })) === true, "跨站 Origin 判为浏览器跨站");
+  ok(isCrossSiteBrowserRequest(fakeReq({ headers: { ...base, referer: "https://evil.example/page" } })) === true, "跨站 Referer 同样拦下");
+  ok(isCrossSiteBrowserRequest(fakeReq({ headers: { ...base, origin: "null" } })) === true, "opaque origin（file:// 页面）拒绝");
+  ok(isCrossSiteBrowserRequest(fakeReq({ headers: { ...base, "sec-fetch-site": "cross-site" } })) === true, "Sec-Fetch-Site: cross-site 直接拒绝");
+  // 兼容模式豁免必须带上来源围栏：任意网页的无 Cookie fetch 不得驱动提权安装
+  {
+    const res = fakeRes();
+    ok(
+      admissionGate(fakeReq({ headers: { ...base, origin: "http://evil.example" } }), res, null, { allowLegacyLoopback: true }) === false &&
+        res.statusCode === 403,
+      "开启兼容模式后，跨站浏览器请求仍然被豁免围栏拒绝（CSRF 面关闭）"
+    );
+  }
+  {
+    const res = fakeRes();
+    ok(
+      admissionGate(fakeReq({ headers: base }), res, null, { allowLegacyLoopback: true }) === true &&
+        res.headers["X-DSH-Admission"] === "loopback-legacy-optin",
+      "兼容模式下本机脚本（无来源头）照常放行"
+    );
+  }
+  {
+    const connection = { admit: () => ({ rejection: 401 }) };
+    const res = fakeRes();
+    ok(
+      admissionGate(fakeReq({ headers: { ...base, origin: "http://evil.example" } }), res, connection, { allowLegacyLoopback: true }) === false,
+      "有 connection 时，401+回环+显式 opt-in 也挡不住跨站 Origin"
+    );
+  }
+}
+{
+  // \b版本\b 是死分支（JS \b 只认 ASCII 边界），修复后含「版本」的 DisplayName 能与 winget 条目归并
+  ok(normalizeName("Google Chrome 版本 141.0.7357") === normalizeName("Google Chrome"), "中文名「版本 X」后缀被剥掉");
+  ok(normalizeName("微信 版本 8.0") === normalizeName("微信"), "无空格「版本」也能剥");
+}
+{
+  // 中文 winget 的落盘行（「安装程序已下载:」）必须与英文一样被识别，否则触发重复下载
+  const RE = /(?:Installer downloaded|安装程序已下载)\s*[:：]\s*(.+?)\s*$/m;
+  ok(RE.test("安装程序已下载: D:\\x\\Git-2.56.0.3-64-bit.exe"), "中文冒号/中文文案匹配");
+  ok(RE.test("Installer downloaded: D:\\x\\a.exe"), "英文仍匹配");
+  const m = "安装程序已下载: C:\\d\\Git-64-bit.exe".match(RE);
+  ok(m && m[1] === "C:\\d\\Git-64-bit.exe", "捕获路径");
+}
+{
+  // Windows 扫描：取消必须抛错，绝不把半截输出当「0 个可更新」覆盖上次结果（对抗审查 #1）
+  const scanSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  const winScan = scanSrc.slice(scanSrc.indexOf("export async function scanApps"), scanSrc.indexOf("export async function runUpdates"));
+  ok((winScan.match(/signal && signal\.aborted/g) || []).length >= 3, "scanApps 的 winget 路径有取消检查");
+  // 只看真实代码行（注释里会引用旧写法）：`if (upRes.ok || upRes.stdout)` 必须已消失
+  const codeOnly = winScan.split("\n").filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*")).join("\n");
+  ok(!/upRes\.ok \|\| upRes\.stdout/.test(codeOnly), "半截 stdout 不再被当真值（upRes.ok || upRes.stdout 已移除）");
 }
 
 /* ---------------- 结果 ---------------- */

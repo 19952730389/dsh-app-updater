@@ -128,6 +128,18 @@ curl -X POST -H "Content-Type: application/json" \
   requests carry `X-DSH-Admission: loopback-legacy-optin` and `X-DSH-Admission-Warning`, the
   `admission` field in `state.json` / `health.json` reports `mode: "loopback-legacy-optin"`, the
   settings page shows a red banner, and a `warn` line is written to the log.
+- **Cross-site fence on the legacy exemption (since 1.3.5)**: even when the opt-in is enabled, a
+  loopback request is rejected (`403`) when it looks browser-originated and cross-site — an
+  `Origin` / `Referer` whose host differs from the request `Host`, or `Sec-Fetch-Site: cross-site`.
+  Browsers forbid scripts from forging these headers, so the check is reliable: an arbitrary web
+  page can no longer drive "download + elevated silent install" with a cookie-less `fetch(…/update)`.
+  Local scripts and the host's IPC bridge (which send none of these headers) are unaffected.
+- **The installer hash is re-checked locally before running (since 1.3.5)**: after `winget download`,
+  the plugin recomputes SHA-256 over the on-disk file against the manifest's `InstallerSha256`
+  before executing it (streaming, so a 500 MB package is not read into memory). That file is about
+  to run, possibly elevated, so a swapped or corrupted download is refused and the fallback taken.
+  When the manifest has no hash pairable to this machine's architecture, the check is skipped and
+  logged — never judged against another architecture's hash.
 - **Every write still requires explicit confirmation**: `scan` / `update` / `cancel` /
   `settings` / `open-downloads` require `confirm:true`.
 - **No guessed silent switches**: the publisher's declared `Silent` switches are preferred;

@@ -4,40 +4,73 @@
 
 ## [1.3.5] — 2026-11-02
 
-又一轮对抗式复查（1.3.4 之后），修掉 3 个真实缺陷、补上 1 处文档与实现不一致的承诺。
-这一版没有新功能 —— 全是「判断错误」类问题的收口。
+两轮对抗式复查的合并收口（1.3.4 之后），修掉 9 个真实缺陷、补上 1 处文档与实现不一致的承诺。
+这一版没有新功能 —— 全是「判断错误 / 静默失败 / 条件触发的安全面」类问题。
 
 ### 修复
 
 - **尾缀字典序把 build 号判反**（`lib/version.js`）。数字段一致后，尾缀（`-build10`、
-  `-r100`、`-beta2` 这类）原来是**整串字典序**比较：`-build9` > `-build10`、`-r99` > `-r100`
-  —— 位数一变顺序就翻转。对插件来说这是静默漏报：winget 给出 `1.2.3-build10`、本机装的是
-  `1.2.3-build9`，`isNewer()` 返回 false → 用户看到「已是最新」。现在尾缀按**自然序**比较
-  （数字块按数值、字母块按字典序，短的前置，`-beta2 < -beta10`），同时保留原有语义：
-  正式版 > 任何预发布尾缀（`1.2.3 > 1.2.3-beta` 不变）。新增回归：`compareTails` 直接测 +
-  build/r/beta/rc 各一组端到端。
-- **注册表读取会被一条无关的 PowerShell 警告整体误伤**（`lib/registry.js`）。原来 stderr 与
-  stdout 被 push 进**同一个缓冲数组**：只要 PowerShell 往 stderr 写一句执行策略提示或
-  .NET 横幅，拼出来的「JSON」就解析失败 → 整次注册表读取被记成失败 → winget 目录之外的
-  已装应用这一轮全部消失，用户看到的是「本次只能显示 winget 清单」。现在 stderr 单独收，
-  只有 exit≠0 才算失败，stderr 内容进错误消息。
+  `-r100`、`-beta2`、Java 的 `8u202` 这类）原来是**整串字典序**比较：`-build9` > `-build10`、
+  `8u99` > `8u202` —— 位数一变顺序就翻转。对插件来说这是静默漏报：已装 `1.2.3-build9`、
+  有 `1.2.3-build10`，`isNewer()` 返回 false → 用户看到「已是最新」；复核路径还会把成功
+  安装误判「没有变化」。现在尾缀按**自然序**比较（数字块按数值、字母块按字典序，
+  `-beta2 < -beta10`），保留原有语义：正式版 > 任何预发布尾缀。
+- **Windows 扫描不检查取消/超时，半截输出伪装成「0 个可更新」**（`lib/engine.js scanApps`）。
+  取消或 240s 超时杀掉 `winget list` 后，半截 stdout 被解析成残缺清单；
+  `if (upRes.ok || upRes.stdout)` 又把超时残留字符串真值当成功 → `hasUpdate` 全 false →
+  整表覆盖上一次完整结果。macOS 路径 1.3.4 修过同款，这次补上 Windows 侧：
+  取消一律向上抛（不算故障、不写红横幅），非零退出/超时不再解析，降级注册表源并如实
+  警告「本次清单可能不完整」。
+- **注册表读取会被一条无关的 PowerShell 警告整体误伤**（`lib/registry.js`）。stderr 原来与
+  stdout 共用同一缓冲数组：任何一条执行策略提示或 .NET 横幅插进 JSON 中部 → 整体解析失败
+  → 注册表源全量丢弃，用户以为这台机器读不到已装应用。winget 侧同病（`lib/winget.js`）：
+  stderr 混进定宽表还可能伪造数据行。现在两个进程都分桶收集，`stderr` 字段如实传给错误分类。
 - **哈希校验：文档承诺 ≠ 实际行为 → 现在真的做了**（`lib/engine.js`）。README 写「下载时按清单
   核对 SHA-256」——winget 自己确实会核对（我们从不传 `--skip-hash-check`），但**执行前的那个文件**
-  我们此前没有任何本地校验。而这个文件紧接着会以**管理员**身份静默执行：下载落盘与执行之间
-  被替换、被截断、被杀软改写，都会直接提权运行。1.3.5 起：
+  此前没有任何本地校验。而这个文件紧接着会以**管理员**身份静默执行。1.3.5 起：
   - `parseInstallerManifest` 按 Installer 块配对收集 `Architecture → InstallerSha256`
-    （兼容 `- Architecture:` 列表首项的写法）；
-  - `verifyInstallerHash` 流式（`createReadStream`，几百 MB 的包不整读进内存）计算实际哈希；
-  - 配对策略：先按本机架构键，再用文件名别名（`64-bit`/`x64`/`arm64`/`aarch64`/`32-bit`…），
+    （兼容 `- Architecture:` 列表首项写法）；
+  - `verifyInstallerHash` 流式（`createReadStream`，不整读几百 MB 的包）复核实际哈希；
+  - 配对策略：先按本机架构键，再用文件名别名（`64-bit`/`x64`/`arm64`/`aarch64`…），
     单哈希清单直接用；**多架构配对不出时宁可跳过并记 info**，绝不拿别架构哈希把正确文件判成篡改；
-  - 不一致 → **不执行**，如实报「期望/实际」两个哈希，并照旧走 `winget upgrade` 兜底；
-  - 更新结果里新增 `hash: verified|skipped|mismatch` 供界面与排查使用。
-- README / README.en 的执行流程表补充「执行前本地复核哈希（1.3.5 起）」，使文档承诺与代码一致。
+  - 不一致 → **拒绝执行**，报「期望/实际」两个哈希，照旧走 `winget upgrade` 兜底；
+  - 更新结果新增 `hash: verified|skipped|mismatch`。
+- **兼容模式（legacy loopback）可被任意网页 CSRF 驱动提权安装**（`lib/index.js`）。开启
+  `allowLegacyLoopback` 后，第三方网页的 `fetch("http://127.0.0.1:…/update",{mode:"no-cors"})`
+  天然不带 Cookie → 过「无凭据才豁免」那条规则 → 无认证触发「下载任意包 + UAC 提权静默安装」。
+  现在豁免路径加来源围栏：`Origin`/`Referer` 存在且与 `Host` 不同源、或
+  `Sec-Fetch-Site: cross-site`，一律 403（浏览器禁止脚本伪造这些头，判定可靠；本机脚本与
+  IPC 桥不带这些头，不受影响）。
+- **取消/超时杀不掉提权安装树**（`lib/elevate.js`）。旧实现 Node 侧只能杀**启动器**；
+  提权副本与安装器在独立进程树里继续跑，而队列已排到下一个应用（并发双装 + 幽灵安装）。
+  现在助手脚本（本身就是提权进程）自己盯 `cancel.flag`（500ms 轮询），看到就
+  `taskkill /T /F` 杀整棵安装器树再报告退出码；读不到退出码时按失败处理，绝不伪造 0。
+- **「取消后立刻重试」的竞态**（`lib/index.js`）。旧任务 finally 无条件清 `control` 槽位，
+  会把新任务句柄清成 null → `/cancel` 声称成功但新任务不可取消，旧半截结果还会覆盖新结果。
+  现在 finally 做所有权检查（`control.scanAbort === abort` 才清），被接管的任务结果作废。
+- **macOS 更新复核失败仍报「更新完成」**（`lib/engine.js runMacosUpdates`）。
+  `brew list` 读空时此前直接 `log success` 且 `entry.ok=true` 无标注；现在与 Windows 准则
+  一致：读不到版本 → note 标「未复核：brew list 读不到更新后的版本」+ warn 日志；
+  取消/超时优先判错，不给误导性原因。
+- **注册表 PowerShell 枚举没有取消通道**（`lib/registry.js`）。扫描取消后仍跑满 60s；
+  现在 `spawn({ signal })` 直通，取消立刻杀。
+- **`normalizeName` 的 `\b版本\b` 是死分支**（`lib/registry.js`）。JS `\b` 只认 ASCII 边界，
+  「版」「本」都是非词字符 → 永不命中 → 「XXX 版本 1.2.3」与 winget 的「XXX」认不成同一条，
+  同一软件重复列出。改为字面匹配 `版本`。
+- **中文 winget 的落盘行匹配不到**（`lib/engine.js downloadInstaller`）。只认英文
+  `Installer downloaded:`，中文系统的「安装程序已下载:」落到不可靠的目录 diff，失手时报
+  「没找到安装包」→ 触发兜底**把同一个包再下载一遍**。正则改为中英双语（与
+  `classifyWingetError` 一致）。
+
+### 文档
+
+- README / README.en 的执行流程表补充「执行前本地复核哈希（1.3.5 起）」，使承诺与实现一致。
 
 ### 测试
 
-- `node test/unit.mjs` **168/168**（+15：自然序 8 条、清单哈希配对 4 条、哈希端到端 3 条）、
-  `node test/render.mjs` **51/51**、`node test/deny.mjs` **12/12**。
+- `node test/unit.mjs` **184/184**（+31：自然序 8、清单哈希配对 4、哈希端到端 3、
+  来源围栏 9、归一化 2、双语匹配 3、取消检查 2）、`node test/render.mjs` **51/51**、
+  `node test/deny.mjs` **12/12**。
 - 哈希端到端用 `mkdtemp` 临时目录真算真比：一致 → 通过；不一致 → 拒绝且错误里带两个哈希；
   清单缺哈希 → `skipped` 而不是失败。
 

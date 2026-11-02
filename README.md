@@ -154,10 +154,18 @@ curl -X POST -H "Content-Type: application/json" \
   - 或启动 DSH 前设置环境变量 `DSH_APP_UPDATER_ALLOW_LEGACY_LOOPBACK=1`。
 
   开启后：放行的回环请求带 `X-DSH-Admission: loopback-legacy-optin` 与
-  `X-DSH-Admission-Warning`，`state.json` / `health.json` 的 `admission` 字段会标明
-  `mode: "loopback-legacy-optin"`，设置页顶部也会出现红色提示条；日志里记一条 `warn`。
+  `X-DSH-Admission-Warning`，`state.json` / `health.json` 的 `admission` 字段会标明 `mode: "loopback-legacy-optin"`，设置页顶部也会出现红色提示条；日志里记一条 `warn`。
+- **兼容模式的来源围栏（1.3.5 起）**：豁免路径拒绝「跨站浏览器请求」——`Origin` / `Referer`
+  存在且与本次请求的 `Host` 不同源，或 `Sec-Fetch-Site: cross-site`，一律 `403`。
+  浏览器禁止脚本伪造这几个头（forbidden header），所以判定可靠：任意第三方网页的
+  无 Cookie `fetch(…/update)` 不再可能驱动「下载 + 提权安装」；本机脚本与宿主 IPC 桥
+  （不带这些头）不受影响。
 - **写操作还要显式确认**：`scan` / `update` / `cancel` / `settings` / `open-downloads` 必须带 `confirm:true`。
 - **不猜测静默参数**：优先用发布方在清单里声明的 `Silent` 参数；清单缺失时才按安装包类型用保守的默认开关。
+- **执行前本地复核 SHA-256（1.3.5 起）**：`winget download` 完成后，按随包清单的
+  `InstallerSha256` 对流盘的安装包重新计算一次哈希再执行——这个文件紧接着可能以管理员
+  身份运行，中途被替换或损坏必须拦住；不一致就不执行、改用兜底。清单里配对不出本次
+  架构的哈希时跳过并记录，绝不拿别的架构的哈希误判。
 - **需要管理员时自动提权**：机器级安装包（MSI、写入 `Program Files`）交给
   `Start-Process -Verb RunAs` 的提权副本执行（可在设置里关掉「自动提权安装」）；
   UAC 为「始终通知」时每次安装会弹一次确认。
@@ -172,7 +180,8 @@ curl -X POST -H "Content-Type: application/json" \
 
 - **Windows**：`winget.exe`（Microsoft「应用安装程序 / App Installer」）。没装 winget 时插件仍能列出注册表里的应用，但无法判断是否有新版本。
 - **macOS**：无需额外依赖即可**列出**应用（直接读 `/Applications` 等目录里的 `.app`）；要判断并执行更新需要 `brew`（[Homebrew](https://brew.sh)）。没装 Homebrew 时会照常列出应用，并说明「安装 Homebrew 后可一键升级 cask 应用」。
-  cask 目录（19 MB）走**官方 + 清华 / 中科大 / 阿里云镜像并发竞速**，单地址限时 60 秒，
+  cask 目录（19 MB）走**官方 + 清华 TUNA / 中科大 USTC 并发竞速**（阿里云镜像是过期快照、
+  会把「有更新」静默说成「已是最新」，1.3.4 起已剔除），单地址限时 60 秒，
   全部失败时回退 30 天内的过期缓存；抓不到目录会在界面上给出红色警告横幅，而不是假装「无更新」。
 - 不需要任何第三方 npm 依赖；宿主半身只用 Node 内置模块，浏览器半身只用宿主提供的 `react`。
 
