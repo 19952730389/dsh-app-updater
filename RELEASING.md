@@ -52,12 +52,13 @@ gh release create v<version> dsh-app-updater.tgz \
   已 closed 的收录 issue 下可以补一条版本更新评论（如 1.3.5 的准入增强），方便复核者跟进。
 - **dsh.works / DSH.SO / DSH STORE / dsh-market（读 awesome 目录）/ deepseek1024 自动侧**：全部自动抓取，无需任何操作。
 - **DSH Plugin Index（realoiyo.github.io）**：只抓 npm 包，`npm publish` 后下次重建即更新。
-- **deepseek.club Plugin Hub：用 `dsh-appupdater` 这个名字提交**（入口 https://deepseek.club/plugins/submit ，
-  需站内账号登录）。slug 槽 `dsh-app-updater` 已被另一个同名插件占用（m1452700576/dsh-app-updater，
-  检测并更新 DSH 自身用的），撞名会被并成一条或误导用户。1.3.6 起 GitHub 仓库同步改名为
-  `19952730389/dsh-appupdater`（旧 URL 自动重定向）；**npm 包名、插件 id、路由、数据目录不变**——
-  npm 防混淆规则不允许同作者发相似名（`dsh-appupdater` 被 registry 拒绝），维持 `dsh-app-updater`
-  用户零迁移。网站表单里 sourceUrl/websiteUrl 填新仓库，installCommand 仍是 `dsh plugin add dsh-app-updater`。
+- **deepseek.club Plugin Hub：暂不上架（1.3.7 起维持原名）**。该站的插件 slug
+  `dsh-app-updater` 已被另一个同名插件占用（m1452700576/dsh-app-updater，检测并更新 DSH 自身用的），
+  要上架只能改名；npm 防混淆规则又拒绝同作者发相似名（`dsh-appupdater` 发不出去），
+  1.3.6 曾把 GitHub 仓库改成 dsh-appupdater，**1.3.7 已改回**，一切维持原名。
+  入口 https://deepseek.club/plugins/submit（tRPC `plugin.submit`，需站内账号登录；
+  表单字段 name/slug/summary/description/categorySlug(tool)/currentVersion/sourceUrl/websiteUrl/installCommand/authorName/license，
+  提交还会带附件上传 createPendingUploadSession/completePendingUpload）。将来若决定改名上那家，字段资料是现成的。
 - 提交入口（首次收录用）：
   - dsh-plugin.org → https://github.com/dshplugin/dsh-plugin-hub/issues （模板见其 submit 页）
   - dshopen.org → https://github.com/polang233/dsh-plugin-index/issues/new?template=plugin-add.yml

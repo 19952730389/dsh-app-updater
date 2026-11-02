@@ -26,10 +26,10 @@ Without npm, install from source or from the prebuilt tarball:
 
 ```bash
 # source repository
-dsh plugin --profile web add github:19952730389/dsh-appupdater
+dsh plugin --profile web add github:19952730389/dsh-app-updater
 
 # prebuilt tgz (see Releases)
-dsh plugin --profile web add https://github.com/19952730389/dsh-appupdater/releases/latest/download/dsh-app-updater.tgz
+dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/releases/latest/download/dsh-app-updater.tgz
 ```
 
 Restart DSH afterwards; the plugin lives at **Settings → 应用更新**. The Electron-managed

@@ -2,6 +2,17 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.7] — 2026-11-02
+
+**改名回退**：GitHub 仓库 `19952730389/dsh-appupdater` → **改回 `19952730389/dsh-app-updater`**。
+1.3.6 的仓库改名（为绕开 deepseek.club Plugin Hub 的撞名）经你确认不再需要，整体撤销：
+仓库名、package.json 的 repository/homepage/bugs、README 链接全部回到原名。
+deepseek.club 那家不上架了（RELEASING.md 保留提交入口与表单字段资料，供将来参考）。
+
+- npm 包名/插件 id/路由/数据目录自 1.3.5 起就未变过，本次回退**对用户零影响**。
+- v1.3.6 的 tag 与 Release 留在仓库里作为过程记录（资产文件名一直是 `dsh-app-updater.tgz`，未受影响）。
+- 代码与 1.3.5/1.3.6 一致（仅文档与 URL 差异）；市场条目继续指向 `releases/latest/download/dsh-app-updater.tgz`。
+
 ## [1.3.6] — 2026-11-02
 
 **GitHub 仓库改名**：`19952730389/dsh-app-updater` → **`19952730389/dsh-appupdater`**
