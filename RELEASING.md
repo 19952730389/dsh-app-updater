@@ -49,12 +49,21 @@ gh release create v<version> dsh-app-updater.tgz \
 
 - **dsh-plugin.org / dshopen.org / awesome-dsh-plugin**：仓库更新后它们按各自刷新周期同步，
   一般不需要重新提交；条目信息（版本、Star、更新时间）会自动跟上。
-- **dsh.works / DSH.SO / DSH STORE**：全部自动抓取，无需任何操作。
+  已 closed 的收录 issue 下可以补一条版本更新评论（如 1.3.5 的准入增强），方便复核者跟进。
+- **dsh.works / DSH.SO / DSH STORE / dsh-market（读 awesome 目录）/ deepseek1024 自动侧**：全部自动抓取，无需任何操作。
 - **DSH Plugin Index（realoiyo.github.io）**：只抓 npm 包，`npm publish` 后下次重建即更新。
+- **deepseek.club Plugin Hub：不要用 `dsh-app-updater` 这个名字提交**——名字槽已被另一个
+  同名插件占用（m1452700576/dsh-app-updater，检测并更新 DSH 自身用的），撞名会被并成一条或误导用户。
 - 提交入口（首次收录用）：
   - dsh-plugin.org → https://github.com/dshplugin/dsh-plugin-hub/issues （模板见其 submit 页）
   - dshopen.org → https://github.com/polang233/dsh-plugin-index/issues/new?template=plugin-add.yml
   - awesome-dsh-plugin → 向仓库提 PR，新增 `data/plugins/<owner>__<repo>.yml`（见其 contributing.md）
+  - deepseek1024.com（人工目录）→ PR 新增 `catalog/plugins/<owner>--<repo>.json` 一个文件
+    （schema 见 `catalog/schema/plugin.schema.json`；描述 ≤1000 字符、中立措辞；
+    通过 static-review 的**单一新增**条目由机器人自动 squash-merge，无人工环节）
+
+> 版本号缺口备忘：**1.3.3 发过 GitHub Release 但没有发 npm**（registry 序列是
+> 1.3.2 → 1.3.4 → 1.3.5）。npm 用户不会漏内容（直接跳版即可），这里注明是为了后来人别以为 registry 少了一版。
 
 ### 刚发版时别人可能装到旧版本
 
