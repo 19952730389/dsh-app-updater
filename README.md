@@ -1,4 +1,4 @@
-# dsh-appupdater — 应用更新（DSH 插件）
+# dsh-app-updater — 应用更新（DSH 插件）
 
 检测本机**所有已安装应用**是否有新版本，并从各自**官网下载完整安装包**一键静默更新。
 检测过程**不需要打开被检测的软件**。
@@ -10,11 +10,11 @@
 
 ```bash
 # npm 包（推荐，插件中心同样可一键安装）
-dsh plugin --profile web add dsh-appupdater
+dsh plugin --profile web add dsh-app-updater
 ```
 
 > 刚发布的新版本可能被 pnpm 的 `minimumReleaseAge` 策略暂缓一段时间；想立刻装到指定版本就显式写版本号：
-> `dsh plugin --profile web add dsh-appupdater@1.2.0`（细节见 [RELEASING.md](RELEASING.md)）。
+> `dsh plugin --profile web add dsh-app-updater@1.2.0`（细节见 [RELEASING.md](RELEASING.md)）。
 
 不想走 npm，也可以用源码或发行包：
 
@@ -23,13 +23,13 @@ dsh plugin --profile web add dsh-appupdater
 dsh plugin --profile web add github:19952730389/dsh-appupdater
 
 # 预构建 tgz（见 Releases）
-dsh plugin --profile web add https://github.com/19952730389/dsh-appupdater/releases/latest/download/dsh-appupdater.tgz
+dsh plugin --profile web add https://github.com/19952730389/dsh-appupdater/releases/latest/download/dsh-app-updater.tgz
 ```
 
 装好后重启 DSH，在 **设置 → 应用更新** 使用。桌面端（Electron 托管的 `desktop` profile）不允许
 `dsh plugin` 直接改写，需在 profile 的 `node_modules` 下建 junction 并手动补 `bundles`。
 
-[![npm](https://img.shields.io/npm/v/dsh-appupdater?style=flat-square&label=npm&color=0891b2&logo=npm)](https://www.npmjs.com/package/dsh-appupdater)
+[![npm](https://img.shields.io/npm/v/dsh-app-updater?style=flat-square&label=npm&color=0891b2&logo=npm)](https://www.npmjs.com/package/dsh-app-updater)
 ![license](https://img.shields.io/badge/license-MIT-2f6f4f?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows-7da1de?style=flat-square)
 ![dsh-plugin](https://img.shields.io/badge/DSH-plugin-263146?style=flat-square)
@@ -105,7 +105,7 @@ brew install --cask --adopt google-chrome
 
 ## 设置项
 
-状态文件：`%USERPROFILE%\.dsh\dsh-appupdater\state.json`
+状态文件：`%USERPROFILE%\.dsh\dsh-app-updater\state.json`
 
 | 键 | 默认 | 说明 |
 |---|---|---|
@@ -124,7 +124,7 @@ brew install --cask --adopt google-chrome
 ```bash
 curl -X POST -H "Content-Type: application/json" \
   -d '{"confirm":true,"settings":{"dryRun":true}}' \
-  http://127.0.0.1:<port>/dsh-appupdater/settings
+  http://127.0.0.1:<port>/dsh-app-updater/settings
 ```
 
 `downloadDir` 会被校验：必须留空（用默认目录）或是绝对路径（`D:\Apps`）／UNC 路径（`\\server\share`），
@@ -146,7 +146,7 @@ curl -X POST -H "Content-Type: application/json" \
   - 插件配置（`cordis.patch.yml` 里覆盖同名条目）：
 
     ```yaml
-    - id: dsh-appupdater
+    - id: dsh-app-updater
       config:
         allowLegacyLoopback: true
     ```
@@ -172,7 +172,7 @@ curl -X POST -H "Content-Type: application/json" \
 - **安装后复核版本**：用「安装前 / 安装后 / 目标」三个版本判断这次更新是否真的生效 ——
   退出码 0 不再等于成功（机器级安装包在没提权时会静默退出 0 却什么都没装）。
 - **不做系统组件更新**：`.NET` 运行时、VC++ 运行库等仍会列出来，但默认不作为一键更新的目标。
-- **只写自己的目录**：状态与日志写在 `~/.dsh/dsh-appupdater/`，不碰 profile 与宿主配置。
+- **只写自己的目录**：状态与日志写在 `~/.dsh/dsh-app-updater/`，不碰 profile 与宿主配置。
 
 ---
 
@@ -189,26 +189,26 @@ curl -X POST -H "Content-Type: application/json" \
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| GET | `/dsh-appupdater/state.json` | 当前状态、应用清单、日志、设置 |
-| GET | `/dsh-appupdater/apps.json` | 只取应用清单与统计 |
-| GET | `/dsh-appupdater/health.json` | 自检：版本、运行环境、引擎与能力、路由数、数据目录 |
-| POST | `/dsh-appupdater/scan` | `{confirm:true, force:true}` 开始扫描 |
-| POST | `/dsh-appupdater/update` | `{confirm:true, ids:[...]}` 开始更新队列 |
-| POST | `/dsh-appupdater/cancel` | `{confirm:true}` 取消未开始项 |
-| POST | `/dsh-appupdater/settings` | `{confirm:true, settings:{...}}` |
-| POST | `/dsh-appupdater/open-downloads` | `{confirm:true}` 打开下载目录 |
+| GET | `/dsh-app-updater/state.json` | 当前状态、应用清单、日志、设置 |
+| GET | `/dsh-app-updater/apps.json` | 只取应用清单与统计 |
+| GET | `/dsh-app-updater/health.json` | 自检：版本、运行环境、引擎与能力、路由数、数据目录 |
+| POST | `/dsh-app-updater/scan` | `{confirm:true, force:true}` 开始扫描 |
+| POST | `/dsh-app-updater/update` | `{confirm:true, ids:[...]}` 开始更新队列 |
+| POST | `/dsh-app-updater/cancel` | `{confirm:true}` 取消未开始项 |
+| POST | `/dsh-app-updater/settings` | `{confirm:true, settings:{...}}` |
+| POST | `/dsh-app-updater/open-downloads` | `{confirm:true}` 打开下载目录 |
 
 ## 安装（开发）
 
 ```bash
 # 本地目录安装
-dsh plugin --profile <profile> add file:/path/to/dsh-appupdater
+dsh plugin --profile <profile> add file:/path/to/dsh-app-updater
 
 # 或者用链接（开发时改代码即时生效）
-dsh plugin --profile <profile> add link:/path/to/dsh-appupdater
+dsh plugin --profile <profile> add link:/path/to/dsh-app-updater
 ```
 
-装好后把 `dsh-appupdater` 加进 profile `package.json` 的 `dsh.profile.bundles` 清单
+装好后把 `dsh-app-updater` 加进 profile `package.json` 的 `dsh.profile.bundles` 清单
 （包内自带的 `cordis.patch.yml` 会挂载宿主半身），然后重启 DSH 即可在设置页看到入口。
 
 > 桌面端（Electron 托管）的 `desktop` profile 不允许用 `dsh plugin` 直接改写，
@@ -261,9 +261,9 @@ Edge 走它自带的更新服务：winget 目录里的 `Microsoft.Edge` 是企�
 
 ## 卸载
 
-1. 从 profile 的 `package.json` 里删掉 `dsh.profile.bundles` 中的 `dsh-appupdater` 与 `dependencies` 中的对应条目。
-2. 删除 `%USERPROFILE%\.dsh\profiles\<profile>\node_modules\dsh-appupdater`。
-3. 重启 DSH；数据目录 `%USERPROFILE%\.dsh\dsh-appupdater` 可自行删除。
+1. 从 profile 的 `package.json` 里删掉 `dsh.profile.bundles` 中的 `dsh-app-updater` 与 `dependencies` 中的对应条目。
+2. 删除 `%USERPROFILE%\.dsh\profiles\<profile>\node_modules\dsh-app-updater`。
+3. 重启 DSH；数据目录 `%USERPROFILE%\.dsh\dsh-app-updater` 可自行删除。
 
 ## 文件
 

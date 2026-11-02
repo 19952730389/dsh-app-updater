@@ -284,7 +284,7 @@ const fakeRequire = (name) => {
 // eslint-disable-next-line no-new-func
 new Function("window", "document", "fetch", "require", src)(fakeWindow, dom.document, fakeFetch, fakeRequire);
 
-if (!captured || captured.id !== "dsh-appupdater") {
+if (!captured || captured.id !== "dsh-app-updater") {
   console.log("模块加载失败");
   process.exit(1);
 }

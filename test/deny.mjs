@@ -1,6 +1,6 @@
 /**
  * 默认拒绝的端到端自测：宿主没有 connection 服务、且用户没有显式开启兼容模式时，
- * `/dsh-appupdater/*` 的每一条路由都必须 403（1.3.0 的「仅凭回环放行」已移除）。
+ * `/dsh-app-updater/*` 的每一条路由都必须 403（1.3.0 的「仅凭回环放行」已移除）。
  * 反方向再验证一次：显式开启兼容模式后，回环请求才会被放行并带上 opt-in 响应头。
  *
  * 运行：node test/deny.mjs
@@ -72,14 +72,14 @@ async function serve(server) {
 }
 
 const ROUTES = [
-  "/dsh-appupdater/state.json",
-  "/dsh-appupdater/apps.json",
-  "/dsh-appupdater/scan",
-  "/dsh-appupdater/update",
-  "/dsh-appupdater/cancel",
-  "/dsh-appupdater/settings",
-  "/dsh-appupdater/open-downloads",
-  "/dsh-appupdater/health.json",
+  "/dsh-app-updater/state.json",
+  "/dsh-app-updater/apps.json",
+  "/dsh-app-updater/scan",
+  "/dsh-app-updater/update",
+  "/dsh-app-updater/cancel",
+  "/dsh-app-updater/settings",
+  "/dsh-app-updater/open-downloads",
+  "/dsh-app-updater/health.json",
 ];
 
 /* ------------------------------------------------------------------ *
@@ -90,7 +90,7 @@ const denied = mount(undefined);
 const deniedBase = await serve(denied.server);
 for (const p of ROUTES) {
   const isWrite = ["/scan", "/update", "/cancel", "/settings", "/open-downloads"].includes(
-    p.replace("/dsh-appupdater", "")
+    p.replace("/dsh-app-updater", "")
   );
   const res = await fetch(deniedBase + p, isWrite
     ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) }
@@ -116,7 +116,7 @@ console.log("\n显式开启兼容模式（配置 allowLegacyLoopback: true）");
 const legacy = mount({ allowLegacyLoopback: true });
 const legacyBase = await serve(legacy.server);
 
-const stateRes = await fetch(legacyBase + "/dsh-appupdater/state.json");
+const stateRes = await fetch(legacyBase + "/dsh-app-updater/state.json");
 const state = await stateRes.json();
 ok(
   stateRes.status === 200 && stateRes.headers.get("x-dsh-admission") === "loopback-legacy-optin",
@@ -128,14 +128,14 @@ ok(
   state && state.admission
 );
 
-const health = await (await fetch(legacyBase + "/dsh-appupdater/health.json")).json();
+const health = await (await fetch(legacyBase + "/dsh-app-updater/health.json")).json();
 ok(
   health && health.admission && health.admission.mode === "loopback-legacy-optin",
   "health.json 同样标注兼容模式",
   health && health.admission
 );
 
-const badWrite = await (await fetch(legacyBase + "/dsh-appupdater/scan", {
+const badWrite = await (await fetch(legacyBase + "/dsh-app-updater/scan", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({}),

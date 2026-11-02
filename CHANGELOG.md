@@ -4,17 +4,18 @@
 
 ## [1.3.6] — 2026-11-02
 
-**改名**：`dsh-app-updater` → **`dsh-appupdater`**（npm 包名、插件 id、HTTP 路由前缀、
-数据目录、临时目录前缀一并跟随）。改名原因：deepseek.club Plugin Hub 的 slug `dsh-app-updater`
-已被另一个同名插件占用（`m1452700576/dsh-app-updater`，用途是更新 DSH 自身），要在那家上架
-必须避开撞名；GitHub 仓库同步改名（旧 URL 由 GitHub 自动重定向）。
+**GitHub 仓库改名**：`19952730389/dsh-app-updater` → **`19952730389/dsh-appupdater`**
+（旧 URL 由 GitHub 自动重定向；README / package.json 里的仓库链接与源码安装命令已指向新名，
+tarball 资产名 `dsh-app-updater.tgz` 不变，各市场 `releases/latest` 链接不受影响）。
 
-- **升级注意**：数据目录从 `~/.dsh/dsh-app-updater/` 变为 `~/.dsh/dsh-appupdater/`。
-  新目录首次使用时从旧目录**自动迁移一次**状态与设置（`lib/state.js`：旧目录存在且新目录
-  没有 state.json 时复制过来，日志不迁）；卸载旧包后旧目录可手动删除。
-- HTTP 路由前缀变为 `/dsh-appupdater/*`；准入、confirm、来源围栏等安全模型不变（见 1.3.5）。
-- 1.3.5 的全部修复包含在本版本中；CHANGELOG 历史条目里的旧名保留原文，不改写历史。
-- 旧 npm 包 `dsh-app-updater` 将被标记 deprecated 并指向新包名。
+改名原因：deepseek.club Plugin Hub 的插件 slug `dsh-app-updater` 已被另一个同名插件占用
+（`m1452700576/dsh-app-updater`，用途是检测并更新 DSH 自身），在那家上架必须避开撞名。
+
+- **npm 包名、插件 id、HTTP 路由前缀（`/dsh-app-updater/*`）、数据目录维持不变**：
+  npm 的防混淆规则不允许同一作者发布过于相似的名字（`dsh-appupdater` 被 registry 拒绝），
+  与其把生态拆成两套名字（用户迁移成本 + 市场条目重写），不如维持现状：
+  `dsh plugin add dsh-app-updater` 照旧。已配置的环境变量与插件配置也全部沿用。
+- 代码与 1.3.5 逐字节一致，仅仓库 URL 与文档差异。
 
 ## [1.3.5] — 2026-11-02
 

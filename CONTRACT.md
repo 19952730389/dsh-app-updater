@@ -1,21 +1,21 @@
-# dsh-appupdater 契约（宿主 ↔ 客户端）
+# dsh-app-updater 契约（宿主 ↔ 客户端）
 
-插件 id：`dsh-appupdater`　显示名：应用更新（App Updater）
+插件 id：`dsh-app-updater`　显示名：应用更新（App Updater）
 
 ## 文件布局
 
 ```
-dsh-appupdater/
+dsh-app-updater/
 ├─ package.json          # main: ./lib/index.js, exports ./client, dsh.bundle.patch, dsh.client
-├─ cordis.patch.yml      # insert 行：id=dsh-appupdater, name=dsh-appupdater
+├─ cordis.patch.yml      # insert 行：id=dsh-app-updater, name=dsh-app-updater
 ├─ lib/
-│  ├─ index.js           # 宿主半身：cordis 插件，注册 /dsh-appupdater/* 路由
+│  ├─ index.js           # 宿主半身：cordis 插件，注册 /dsh-app-updater/* 路由
 │  ├─ platform.js        # 运行环境识别：Windows / macOS、版本、CPU 架构、引擎选择
 │  ├─ engine.js          # 扫描 / 下载 / 安装编排（Windows=winget / macOS=Homebrew）
 │  ├─ winget.js          # winget 定位、调用、表格解析
 │  ├─ registry.js        # 注册表 Uninstall 键枚举（覆盖 winget 未收录的应用）
 │  ├─ version.js         # 版本比较（Windows 风格 1.2.3.4 + 字母后缀）
-│  ├─ state.js           # 持久化状态（~/.dsh/dsh-appupdater/state.json）
+│  ├─ state.js           # 持久化状态（~/.dsh/dsh-app-updater/state.json）
 │  └─ client.js          # 浏览器半身：设置页 UI
 └─ README.md
 ```
@@ -39,7 +39,7 @@ dsh-appupdater/
 
 ## 宿主 HTTP 路由
 
-全部 `kind: "exact"`，前缀 `/dsh-appupdater/`。每个请求先过 **connection 准入**：
+全部 `kind: "exact"`，前缀 `/dsh-app-updater/`。每个请求先过 **connection 准入**：
 `ctx.connection.admit(req)`（DSH 的 Host/Origin 信任校验 + 浏览器会话 / API 认证，
 宿主自己的 `/api` 路由用的同一套），被拒即返回 `401`（未认证）/ `403`（不可信来源）/
 `409`（连接被占用），响应头带 `X-DSH-Admission: denied`；写操作再要求 `confirm: true`。
@@ -50,7 +50,7 @@ dsh-appupdater/
 `X-DSH-Admission: loopback-legacy-optin` 与 `X-DSH-Admission-Warning`（见 `lib/index.js` 的
 `admissionGate` / `resolveLegacyLoopbackOptIn`）。
 
-### GET /dsh-appupdater/state.json
+### GET /dsh-app-updater/state.json
 
 ```jsonc
 {
@@ -95,15 +95,15 @@ dsh-appupdater/
 macOS。macOS 的扫描范围是 `/Applications`、`/Applications/Utilities`、`/System/Applications`
 （及其 `Utilities`）与 `~/Applications`；装在别处的应用不在范围内。
 
-### POST /dsh-appupdater/scan
+### POST /dsh-app-updater/scan
 
 body `{ "confirm": true, "force": true }` → `{ "ok": true, "started": true }`（异步；结果看 state.json / apps.json）
 
-### GET /dsh-appupdater/apps.json
+### GET /dsh-app-updater/apps.json
 
 `{ "ok": true, "scannedAt": 0, "stats": {...}, "items": [App...], "warnings": ["..."] }`
 
-### POST /dsh-appupdater/update
+### POST /dsh-app-updater/update
 
 body `{ "confirm": true, "ids": ["Google.Chrome", "..."], "mode": "silent" }`
 → `{ "ok": true, "started": true, "queued": 3 }`
@@ -127,23 +127,23 @@ Edge 由 `MicrosoftEdgeUpdate.exe /ua` 处理。`settings.dryRun` 时只下载�
 }
 ```
 
-### POST /dsh-appupdater/cancel
+### POST /dsh-app-updater/cancel
 
 → `{ "ok": true }`（取消尚未开始的项目；提权副本是独立进程，取消只会停掉启动器，已经开始的那次安装会自己跑完）
 
-### POST /dsh-appupdater/settings
+### POST /dsh-app-updater/settings
 
 body `{ "confirm": true, "settings": { ... } }` → `{ "ok": true, "settings": {...} }`
 
-### POST /dsh-appupdater/open-downloads
+### POST /dsh-app-updater/open-downloads
 
 → `{ "ok": true, "path": "..." }`（在资源管理器中打开下载目录）
 
 ## 客户端要求
 
-- `window.__ModuleLoader__.load({ id: "dsh-appupdater", factory: (require) => { ... } })`
+- `window.__ModuleLoader__.load({ id: "dsh-app-updater", factory: (require) => { ... } })`
 - `exports.inject = ["slots", "locale"]`
-- 注册 `settings.section`：`{ name: "settings.section", id: "dsh-appupdater", order: 42, label: () => "应用更新" }`
+- 注册 `settings.section`：`{ name: "settings.section", id: "dsh-app-updater", order: 42, label: () => "应用更新" }`
 - 只用 `require("react")`；不引入其它运行时依赖
 - 页面：顶部工具条（刷新检测 / 全部更新 / 取消 / 打开下载目录）+ 统计条 + 可筛选可多选的表格 + 底部日志
 - 表格列：勾选 / 应用名 / 已装版本 / 可升级到 / 来源 / 状态 / 操作

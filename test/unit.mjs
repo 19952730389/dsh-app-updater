@@ -678,30 +678,6 @@ ok(resolveLegacyLoopbackOptIn(undefined, { [LEGACY_LOOPBACK_ENV]: "off" }) === f
   ok(!/upRes\.ok \|\| upRes\.stdout/.test(codeOnly), "半截 stdout 不再被当真值（upRes.ok || upRes.stdout 已移除）");
 }
 
-/* ---------------- 1.3.6 回归：改名迁移 ---------------- */
-{
-  // 旧目录有 state.json、新目录没有 → 复制到新目录；新目录已有状态 → 不迁移不覆盖
-  const { Store } = await import("../lib/state.js");
-  const home = mkdtempSync(join(tmpdir(), "dsh-home-"));
-  process.env.DSH_HOME = home;
-  const legacyDir = join(home, "dsh-app-updater");
-  const newDir = join(home, "dsh-appupdater");
-  mkdirSync(legacyDir, { recursive: true });
-  writeFileSync(join(legacyDir, "state.json"), JSON.stringify({ settings: { dryRun: true }, v: "legacy" }), "utf8");
-  const store = new Store();
-  await store.load();
-  ok(store.migratedFromLegacy === true, "旧目录有状态、新目录没有 → 迁移发生");
-  ok(existsSync(join(newDir, "state.json")), "新目录出现 state.json");
-  ok(store.state.settings.dryRun === true, "迁移后设置跟随过来");
-  writeFileSync(join(newDir, "state.json"), JSON.stringify({ settings: { dryRun: false }, v: "new" }), "utf8");
-  const store2 = new Store();
-  await store2.load();
-  ok(store2.migratedFromLegacy === false && store2.state.v === "new", "新目录已有状态 → 不迁移不覆盖");
-  ok(existsSync(join(legacyDir, "state.json")), "迁移只复制不删除旧目录");
-  delete process.env.DSH_HOME;
-  rmSync(home, { recursive: true, force: true });
-}
-
 /* ---------------- 结果 ---------------- */
 console.log(`\n${failures === 0 ? "全部通过" : "存在失败"}：${checks - failures}/${checks}`);
 process.exit(failures === 0 ? 0 : 1);
