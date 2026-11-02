@@ -1,6 +1,6 @@
 # 发版流程
 
-这个仓库同时是 **GitHub 插件源码** 和 **npm 包 `dsh-app-updater`**，两者版本必须一致。
+这个仓库同时是 **GitHub 插件源码** 和 **npm 包 `dsh-appupdater`**，两者版本必须一致。
 
 ## 1. 改版本号与更新日志
 
@@ -34,14 +34,14 @@ npm publish --access public --userconfig=<某个仓库外的 .npmrc>
 ## 4. 打 GitHub Release（附预构建包）
 
 ```bash
-npm pack --silent                       # 产出 dsh-app-updater-<version>.tgz
-mv dsh-app-updater-*.tgz dsh-app-updater.tgz   # 资产名不要带版本号
-gh release create v<version> dsh-app-updater.tgz \
+npm pack --silent                       # 产出 dsh-appupdater-<version>.tgz
+mv dsh-appupdater-*.tgz dsh-appupdater.tgz   # 资产名不要带版本号
+gh release create v<version> dsh-appupdater.tgz \
   --title "v<version>" --notes-file <(sed -n '/^## \[<version>\]/,/^## \[/p' CHANGELOG.md)
 ```
 
 资产名必须**不带版本号**：README 与各插件市场用的是
-`releases/latest/download/dsh-app-updater.tgz`，`latest/download/` 只解析 `latest`，
+`releases/latest/download/dsh-appupdater.tgz`，`latest/download/` 只解析 `latest`，
 文件名是按字面取的——一旦资产名带版本号，下一次发版这个链接就会 404。
 如果确实想让文件名带版本号，就把链接改成钉住 tag 的形式（`releases/download/v1.0.0/…`）。
 
@@ -52,8 +52,8 @@ gh release create v<version> dsh-app-updater.tgz \
   已 closed 的收录 issue 下可以补一条版本更新评论（如 1.3.5 的准入增强），方便复核者跟进。
 - **dsh.works / DSH.SO / DSH STORE / dsh-market（读 awesome 目录）/ deepseek1024 自动侧**：全部自动抓取，无需任何操作。
 - **DSH Plugin Index（realoiyo.github.io）**：只抓 npm 包，`npm publish` 后下次重建即更新。
-- **deepseek.club Plugin Hub：不要用 `dsh-app-updater` 这个名字提交**——名字槽已被另一个
-  同名插件占用（m1452700576/dsh-app-updater，检测并更新 DSH 自身用的），撞名会被并成一条或误导用户。
+- **deepseek.club Plugin Hub：不要用 `dsh-appupdater` 这个名字提交**——名字槽已被另一个
+  同名插件占用（m1452700576/dsh-appupdater，检测并更新 DSH 自身用的），撞名会被并成一条或误导用户。
 - 提交入口（首次收录用）：
   - dsh-plugin.org → https://github.com/dshplugin/dsh-plugin-hub/issues （模板见其 submit 页）
   - dshopen.org → https://github.com/polang233/dsh-plugin-index/issues/new?template=plugin-add.yml
@@ -72,7 +72,7 @@ pnpm 默认有 `minimumReleaseAge`（新发布的包先观察一段时间才参�
 
 ```bash
 # 立刻拿到刚发布的版本：显式指定版本号
-dsh plugin --profile web add dsh-app-updater@<version>
+dsh plugin --profile web add dsh-appupdater@<version>
 ```
 
 这不是包的问题，是消费端的供应链策略；等宽限期过去后不带版本号也会解析到新版。

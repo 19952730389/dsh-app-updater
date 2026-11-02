@@ -67,23 +67,23 @@ head("routes");
 console.log(routes.map((r) => r.path));
 
 head("health");
-console.log(await get("/dsh-app-updater/health.json"));
+console.log(await get("/dsh-appupdater/health.json"));
 
 head("state (before scan)");
-const s0 = await get("/dsh-app-updater/state.json");
+const s0 = await get("/dsh-appupdater/state.json");
 console.log({ phase: s0.phase, winget: s0.winget, items: s0.apps.items.length, downloadDir: s0.downloadDir });
 
 head("write gate: missing confirm");
-console.log(await post("/dsh-app-updater/scan", {}));
+console.log(await post("/dsh-appupdater/scan", {}));
 
 head("write gate: bad json");
-console.log(await (await fetch(base + "/dsh-app-updater/scan", { method: "POST", body: "{oops" })).json());
+console.log(await (await fetch(base + "/dsh-appupdater/scan", { method: "POST", body: "{oops" })).json());
 
 if (process.argv.includes("--scan")) {
   head("scan");
-  console.log(await post("/dsh-app-updater/scan", { confirm: true, force: true }));
+  console.log(await post("/dsh-appupdater/scan", { confirm: true, force: true }));
   for (let i = 0; i < 120; i += 1) {
-    const st = await get("/dsh-app-updater/state.json");
+    const st = await get("/dsh-appupdater/state.json");
     if (st.phase === "idle" && st.apps.scannedAt) {
       console.log({ phase: st.phase, stats: st.apps.stats, winget: st.winget });
       const up = st.apps.items.filter((a) => a.hasUpdate);
@@ -93,16 +93,16 @@ if (process.argv.includes("--scan")) {
     await new Promise((r) => setTimeout(r, 500));
   }
   head("apps.json");
-  const apps = await get("/dsh-app-updater/apps.json");
+  const apps = await get("/dsh-appupdater/apps.json");
   console.log({ total: apps.items.length, stats: apps.stats, warnings: apps.warnings });
 }
 
 if (process.argv.includes("--update")) {
   const id = process.argv[process.argv.indexOf("--update") + 1];
   head(`update ${id}`);
-  console.log(await post("/dsh-app-updater/update", { confirm: true, ids: [id], mode: "silent" }));
+  console.log(await post("/dsh-appupdater/update", { confirm: true, ids: [id], mode: "silent" }));
   for (let i = 0; i < 900; i += 1) {
-    const st = await get("/dsh-app-updater/state.json");
+    const st = await get("/dsh-appupdater/state.json");
     if (st.phase !== "updating") {
       console.log("done:", JSON.stringify(st.update.results, null, 1));
       break;
@@ -111,15 +111,15 @@ if (process.argv.includes("--update")) {
     await new Promise((r) => setTimeout(r, 1000));
   }
   head("log tail");
-  const st = await get("/dsh-app-updater/state.json");
+  const st = await get("/dsh-appupdater/state.json");
   console.log(st.log.slice(-12).map((l) => `[${l.level}] ${l.text}`).join("\n"));
 }
 
 head("settings");
-console.log(await post("/dsh-app-updater/settings", { confirm: true, settings: { keepInstallers: true, downloadDir: "" } }));
+console.log(await post("/dsh-appupdater/settings", { confirm: true, settings: { keepInstallers: true, downloadDir: "" } }));
 
 head("open-downloads (dry: just check path)");
-console.log(await post("/dsh-app-updater/open-downloads", { confirm: true }));
+console.log(await post("/dsh-appupdater/open-downloads", { confirm: true }));
 
 server.close();
 console.log("\nharness done");

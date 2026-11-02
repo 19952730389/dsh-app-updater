@@ -2,6 +2,20 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.6] — 2026-11-02
+
+**改名**：`dsh-app-updater` → **`dsh-appupdater`**（npm 包名、插件 id、HTTP 路由前缀、
+数据目录、临时目录前缀一并跟随）。改名原因：deepseek.club Plugin Hub 的 slug `dsh-app-updater`
+已被另一个同名插件占用（`m1452700576/dsh-app-updater`，用途是更新 DSH 自身），要在那家上架
+必须避开撞名；GitHub 仓库同步改名（旧 URL 由 GitHub 自动重定向）。
+
+- **升级注意**：数据目录从 `~/.dsh/dsh-app-updater/` 变为 `~/.dsh/dsh-appupdater/`。
+  新目录首次使用时从旧目录**自动迁移一次**状态与设置（`lib/state.js`：旧目录存在且新目录
+  没有 state.json 时复制过来，日志不迁）；卸载旧包后旧目录可手动删除。
+- HTTP 路由前缀变为 `/dsh-appupdater/*`；准入、confirm、来源围栏等安全模型不变（见 1.3.5）。
+- 1.3.5 的全部修复包含在本版本中；CHANGELOG 历史条目里的旧名保留原文，不改写历史。
+- 旧 npm 包 `dsh-app-updater` 将被标记 deprecated 并指向新包名。
+
 ## [1.3.5] — 2026-11-02
 
 两轮对抗式复查的合并收口（1.3.4 之后），修掉 9 个真实缺陷、补上 1 处文档与实现不一致的承诺。

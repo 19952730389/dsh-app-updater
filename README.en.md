@@ -1,7 +1,7 @@
-# dsh-app-updater — App Updater for DeepSeek Harness
+# dsh-appupdater — App Updater for DeepSeek Harness
 
 **English** | [简体中文](README.md)
-[![npm](https://img.shields.io/npm/v/dsh-app-updater?style=flat-square&label=npm&color=0891b2&logo=npm)](https://www.npmjs.com/package/dsh-app-updater)
+[![npm](https://img.shields.io/npm/v/dsh-appupdater?style=flat-square&label=npm&color=0891b2&logo=npm)](https://www.npmjs.com/package/dsh-appupdater)
 ![license](https://img.shields.io/badge/license-MIT-2f6f4f?style=flat-square)
 ![platform](https://img.shields.io/badge/platform-Windows-7da1de?style=flat-square)
 ![dsh-plugin](https://img.shields.io/badge/DSH-plugin-263146?style=flat-square)
@@ -19,17 +19,17 @@ Where to find it: DeepSeek Harness → Settings → **应用更新 (App Updater)
 
 ```bash
 # npm package (recommended; also one-click installable from the plugin center)
-dsh plugin --profile web add dsh-app-updater
+dsh plugin --profile web add dsh-appupdater
 ```
 
 Without npm, install from source or from the prebuilt tarball:
 
 ```bash
 # source repository
-dsh plugin --profile web add github:19952730389/dsh-app-updater
+dsh plugin --profile web add github:19952730389/dsh-appupdater
 
 # prebuilt tgz (see Releases)
-dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/releases/latest/download/dsh-app-updater.tgz
+dsh plugin --profile web add https://github.com/19952730389/dsh-appupdater/releases/latest/download/dsh-appupdater.tgz
 ```
 
 Restart DSH afterwards; the plugin lives at **Settings → 应用更新**. The Electron-managed
@@ -84,7 +84,7 @@ Both the installer and its `.yaml` manifest are kept in the download folder, so 
 
 ## Settings
 
-State file: `%USERPROFILE%\.dsh\dsh-app-updater\state.json`
+State file: `%USERPROFILE%\.dsh\dsh-appupdater\state.json`
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -104,7 +104,7 @@ The panel also accepts API calls:
 ```bash
 curl -X POST -H "Content-Type: application/json" \
   -d '{"confirm":true,"settings":{"dryRun":true}}' \
-  http://127.0.0.1:<port>/dsh-app-updater/settings
+  http://127.0.0.1:<port>/dsh-appupdater/settings
 ```
 
 ---
@@ -119,7 +119,7 @@ curl -X POST -H "Content-Type: application/json" \
   If you really need it on an old host, opt in explicitly, either via plugin config:
 
   ```yaml
-  - id: dsh-app-updater
+  - id: dsh-appupdater
     config:
       allowLegacyLoopback: true
   ```
@@ -154,7 +154,7 @@ curl -X POST -H "Content-Type: application/json" \
   installers silently exit 0 without installing anything when they lack administrator rights
   (Logitech G HUB used to be reported as "updated" that way).
 - **System components** (`.NET`, VC++ runtimes, …) are listed but not updated by default.
-- **Only its own directory is written**: state and logs live in `~/.dsh/dsh-app-updater/`.
+- **Only its own directory is written**: state and logs live in `~/.dsh/dsh-appupdater/`.
 
 ## Requirements
 
@@ -196,33 +196,33 @@ the choice back to winget; Homebrew always resolves for the local architecture.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/dsh-app-updater/state.json` | Status, inventory, log, settings |
-| GET | `/dsh-app-updater/apps.json` | Inventory and statistics only |
-| GET | `/dsh-app-updater/health.json` | Self-check: version, environment, engine, capabilities, route count, data directory |
-| POST | `/dsh-app-updater/scan` | `{confirm:true, force:true}` start scanning |
-| POST | `/dsh-app-updater/update` | `{confirm:true, ids:[...]}` start the update queue |
-| POST | `/dsh-app-updater/cancel` | `{confirm:true}` cancel items not yet started |
-| POST | `/dsh-app-updater/settings` | `{confirm:true, settings:{...}}` |
-| POST | `/dsh-app-updater/open-downloads` | `{confirm:true}` open the download folder |
+| GET | `/dsh-appupdater/state.json` | Status, inventory, log, settings |
+| GET | `/dsh-appupdater/apps.json` | Inventory and statistics only |
+| GET | `/dsh-appupdater/health.json` | Self-check: version, environment, engine, capabilities, route count, data directory |
+| POST | `/dsh-appupdater/scan` | `{confirm:true, force:true}` start scanning |
+| POST | `/dsh-appupdater/update` | `{confirm:true, ids:[...]}` start the update queue |
+| POST | `/dsh-appupdater/cancel` | `{confirm:true}` cancel items not yet started |
+| POST | `/dsh-appupdater/settings` | `{confirm:true, settings:{...}}` |
+| POST | `/dsh-appupdater/open-downloads` | `{confirm:true}` open the download folder |
 
 ## Install (from a checkout)
 
 ```bash
 # from a local checkout
-dsh plugin --profile <profile> add file:/path/to/dsh-app-updater
+dsh plugin --profile <profile> add file:/path/to/dsh-appupdater
 
 # or as a local link
-dsh plugin --profile <profile> add link:/path/to/dsh-app-updater
+dsh plugin --profile <profile> add link:/path/to/dsh-appupdater
 ```
 
-Then add `dsh-app-updater` to `dsh.profile.bundles` in the profile's `package.json`
+Then add `dsh-appupdater` to `dsh.profile.bundles` in the profile's `package.json`
 (the bundled `cordis.patch.yml` mounts the host half) and reload DSH.
 
 ## Uninstall
 
-1. Remove `dsh-app-updater` from `dsh.profile.bundles` and from `dependencies` in the profile's `package.json`.
-2. Delete `<profile>/node_modules/dsh-app-updater`.
-3. Restart DSH; the data directory `%USERPROFILE%\.dsh\dsh-app-updater` can be removed as well.
+1. Remove `dsh-appupdater` from `dsh.profile.bundles` and from `dependencies` in the profile's `package.json`.
+2. Delete `<profile>/node_modules/dsh-appupdater`.
+3. Restart DSH; the data directory `%USERPROFILE%\.dsh\dsh-appupdater` can be removed as well.
 
 ## Tests
 
