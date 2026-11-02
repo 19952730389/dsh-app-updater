@@ -18,8 +18,8 @@ import {
   displayWidth,
   sliceByWidth,
 } from "../lib/winget.js";
-import { compareVersions, isNewer, looksLikeVersion, splitVersion } from "../lib/version.js";
-import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs, parseBrewCaskVersions, parseBrewOutdated, findBrew, isArchNotFoundError, explainInstallerExitCode, evaluateUpdateResult, findEdgeUpdate, updateHintFor } from "../lib/engine.js";
+import { compareVersions, isNewer, looksLikeVersion, splitVersion, compareTails } from "../lib/version.js";
+import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs, parseBrewCaskVersions, parseBrewOutdated, findBrew, isArchNotFoundError, explainInstallerExitCode, evaluateUpdateResult, findEdgeUpdate, updateHintFor, pickInstallerSha256, verifyInstallerHash, sha256File } from "../lib/engine.js";
 import { psQuote, ELEVATION_CANCELLED } from "../lib/elevate.js";
 import {
   applicationDirs,
@@ -584,6 +584,40 @@ ok(resolveLegacyLoopbackOptIn(undefined, { [LEGACY_LOOPBACK_ENV]: "off" }) === f
     },
   };
   ok(admissionGate(fakeReq(), res, connection) === false && res.statusCode === 500, "准入抛错 → 500 而不是静默放行");
+}
+
+/* ---------------- 1.3.5 回归：尾缀自然序 / 本地哈希复核 ---------------- */
+{
+  // 尾缀字典序的经典翻车：位数一变顺序就反（build10 < build9）
+  ok(compareVersions("1.2.3-build10", "1.2.3-build9") === 1, "尾缀数字按数值比：build10 > build9");
+  ok(compareVersions("5.8.r100", "5.8.r99") === 1, "尾缀 r100 > r99（字典序会判反）");
+  ok(compareVersions("1.2.3-beta2", "1.2.3-beta10") === -1, "beta2 < beta10");
+  ok(compareTails("rc9", "rc10") === -1, "compareTails 自然序");
+  ok(compareTails("a", "a") === 0, "compareTails 相等");
+  // 预发布语义不能因自然序而回退
+  ok(compareVersions("1.2.3", "1.2.3-beta") === 1, "正式版仍大于预发布");
+  ok(compareVersions("3.0.0-rc1", "3.0.0") === -1, "rc1 小于正式版");
+}
+{
+  const info = parseInstallerManifest(readFileSync(join(dirname(fileURLToPath(import.meta.url)), "fixture-installer-git.yaml"), "utf8"));
+  ok(info.sha256ByArch && info.sha256ByArch.x64 === "dc6d3db061999136e139f31376c5582a9ed6f36a4ea12f15e54ad7fa2bfc0bf2", "清单解析出按架构配对的 InstallerSha256");
+  ok(pickInstallerSha256(info, "x64", "Git-2.56.0.3-64-bit.exe") === info.sha256ByArch.x64, "按架构键直接命中");
+  ok(pickInstallerSha256(info, "", "Git-2.56.0.3-64-bit.exe") === info.sha256ByArch.x64, "架构缺失时用文件名的 64-bit 别名配对");
+  ok(pickInstallerSha256({ sha256ByArch: { x64: "a".repeat(64), arm64: "b".repeat(64) } }, "", "node-v22-setup.msi") === null, "多架构且无法配对时宁可不校验（绝不误判篡改）");
+}
+{
+  const dir = mkdtempSync(join(tmpdir(), "dsh-hash-"));
+  const file = join(dir, "payload.bin");
+  writeFileSync(file, "hello dsh");
+  const hex = await sha256File(file);
+  ok(/^[0-9a-f]{64}$/.test(hex), "sha256File 输出 64 位十六进制");
+  const good = await verifyInstallerHash(file, { sha256ByArch: { any: hex } }, "", () => {});
+  ok(good.ok === true && good.skipped !== true, "哈希一致 → 校验通过");
+  const bad = await verifyInstallerHash(file, { sha256ByArch: { any: "f".repeat(64) } }, "", () => {});
+  ok(bad.ok === false && /不一致/.test(bad.error), "哈希不一致 → 拒绝执行并报期望/实际");
+  const skip = await verifyInstallerHash(file, {}, "", () => {});
+  ok(skip.ok === true && skip.skipped === true, "清单没有可配对哈希 → 跳过而不是失败");
+  rmSync(dir, { recursive: true, force: true });
 }
 
 /* ---------------- 结果 ---------------- */

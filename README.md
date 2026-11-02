@@ -44,7 +44,7 @@ dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/rele
 |---|---|
 | ① 列出已装应用 | `winget list`（覆盖 winget 目录收录的软件 + 商店/MSIX 包）+ Windows 注册表三处 `Uninstall` 键（覆盖 winget 未收录的软件）。全程只读文件与注册表，不启动任何应用。 |
 | ② 判断有没有新版本 | `winget upgrade --include-unknown`：由 winget 官方软件目录给出「已装版本 → 可升级版本」，并与 ①的清单按 Id 合并。 |
-| ③ 一键更新 | `winget download` 把**发布方官网的完整安装包**下载到你指定的目录（下载时按清单核对 SHA-256），解析随包落盘的 winget 清单得到发布方自己的静默参数，再执行静默安装；安装完成后用 `winget list --id` 复核版本号。 |
+| ③ 一键更新 | `winget download` 把**发布方官网的完整安装包**下载到你指定的目录（下载时按清单核对 SHA-256），**执行前插件再本地复核一次哈希**（1.3.5 起：安装包紧跟着要以管理员身份执行，中途被替换或损坏必须拦住；不一致就不执行、改用兜底），解析随包落盘的 winget 清单得到发布方自己的静默参数，再执行静默安装；安装完成后用 `winget list --id` 复核版本号。 |
 | ④ 失败兜底 | 若官网安装包被发布方重新签发导致哈希与目录记录不一致、或清单禁止直接下载，自动退回 `winget upgrade --id <id> --exact --silent`（同样是从官网拉取完整安装包，只是下载与安装过程交给 winget）。 |
 
 **「从对应官网下载」是真的官网**：安装包地址来自 winget 清单里的 `InstallerUrl`，例如

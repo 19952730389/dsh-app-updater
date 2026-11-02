@@ -44,7 +44,7 @@ profile's `node_modules` and add it to `dsh.profile.bundles` manually.
 |---|---|
 | 1. List installed apps | `winget list` (apps known to the winget catalog plus Store/MSIX packages) **and** the three Windows registry `Uninstall` keys (apps the catalog does not know). Read-only: no application is ever started. |
 | 2. Decide whether an update exists | `winget upgrade --include-unknown` gives "installed version → available version" from the official winget catalog, merged into the inventory by package id. |
-| 3. One-click update | `winget download` fetches the **vendor's full installer** from the URL recorded in the winget manifest (SHA-256 verified), the downloaded manifest supplies the publisher's own `InstallerSwitches.Silent`, the installer runs silently, and the resulting version is re-read with `winget list --id`. |
+| 3. One-click update | `winget download` fetches the **vendor's full installer** from the URL recorded in the winget manifest (SHA-256 verified by winget), the plugin **re-checks the hash locally before executing the file** (since 1.3.5 — the installer is about to run, possibly elevated, so a swapped or corrupted download is refused and the fallback path is taken), the downloaded manifest supplies the publisher's own `InstallerSwitches.Silent`, the installer runs silently, and the resulting version is re-read with `winget list --id`. |
 | 4. Fallback | If the vendor re-signed the installer (hash no longer matches the catalog) or the manifest forbids direct download, it falls back to `winget upgrade --id … --exact --silent` — still the full installer from the vendor, with winget doing the fetching and installing. |
 
 Those download URLs really are the vendors' own: `github.com/git-for-windows/…`,
