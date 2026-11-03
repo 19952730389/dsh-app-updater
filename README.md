@@ -91,15 +91,56 @@ dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/rele
 再按 cask 目录反查「它是不是 brew 装的」——拖 DMG / 手动装的应用会如实列出并标
 **非 Homebrew 管理**，不会被算成可更新。所以一台全是拖装应用的 Mac 上，「0 个可更新」是**正确结论**。
 
-想把某个应用变成可一键更新，用 `--adopt` 把它收编进 Homebrew（接管现有 `.app`，不重装）：
+#### 1.3.10 起：能对上 cask 的非 Homebrew 应用**可以直接一键更新**
+
+只要 cask 目录里有这个应用、且 cask 版本比已装的新，本插件会直接执行：
 
 ```bash
-brew install --cask --adopt iina            # 例：本机 1.4.4，cask 已到 1.5.0
-brew install --cask --adopt google-chrome
+brew install --cask --force <token>
 ```
+
+它会移除现有 `.app`、装上 cask 版本，之后该应用自动变成「Homebrew 管理」，
+后续更新走常规 `brew upgrade --cask`。
+
+> **为什么不是 `--adopt`**：Homebrew 的 `--adopt` 只在「已有 app 与要安装的版本
+> **完全一致**」时才接受（`cask/artifact/moved.rb` 会比对 `CFBundleShortVersionString`），
+> 版本不同会直接报 `It seems the existing App is different from the one being installed.`。
+> 也就是说 `--adopt` 只能「认领一个已经是最新的 app」，**不能用来升级**。
+> 实测：IINA 1.4.4 用 `--adopt` 失败，用 `--force` 成功升到 1.5.0 并被 brew 接管。
+
+对不上 cask 的应用仍然无法更新，界面会显示「需手动」并提示去应用内或官网升级。
+
 
 1.3.8 起，界面上这类应用的行提示**会直接把对应命令写出来**（能对上 cask 时给真实 token，
 例如 `非 Homebrew 管理：brew install --cask --adopt iina`），不用再回来看文档。
+
+#### 1.3.9 起：非 Homebrew 应用也能查到「官网最新版本」
+
+「只能列出、不知道有没有新版」并不是必然的 —— macOS 应用**自己就带着更新源**。
+1.3.9 会读这两类源，只读地判断官网有没有新版：
+
+| 类型 | 位置 | 读什么 |
+|---|---|---|
+| Sparkle | `Info.plist` 的 `SUFeedURL` → appcast.xml | `<sparkle:shortVersionString>`（**不是** `sparkle:version` 构建号） |
+| Electron | `Contents/Resources/app-update.yml` | `url` + `channel` → 抓 `<channel>-mac.yml` / `latest-mac.yml` 顶层的 `version:` |
+
+查到后，界面上这类应用会：
+
+- 「可升级到」列显示官网版本 + 橙色 `需手动` 标签（不再是一个破折号）；
+- 状态列显示 **官网有新版**（独立文案与颜色，既不是「已是最新」也不是「不可判断」）；
+- 状态栏补一句「另有 N 个官网有新版，需手动升级」，并可用「需手动」分段筛选；
+- 悬停提示说明版本来自哪个源、以及 `brew install --cask --adopt <token>` 收编命令。
+
+**边界**：这条路径**只用于展示**，绝不会把非 Homebrew 应用变成「可一键更新」——
+`hasUpdate` / `updateSupported` 依然只由 Homebrew 决定。查到版本 ≠ 能替你升级，
+仍需收编进 Homebrew 或用应用内更新。查询是**只读**的：不下载、不安装、不启动被检测的应用。
+
+本机实测覆盖情况（110 个应用）：只有 IINA（Sparkle）与哔哩哔哩（Electron）带可读的更新源；
+其余 43 个非 Homebrew 应用既没有 appcast、`SUFeedURL` 也为空（例如 i4Tools），
+这类应用仍然如实显示「不可判断」—— 不猜、不编版本号。
+
+设置项 `checkOfficialSources`（默认 `true`）可整开关掉；关掉后这些应用回到「不可判断」，
+且扫描不再发起任何对这些域名的请求。
 
 如果状态行下方出现**红色警告横幅**，说明这次扫描的**判断依据本身失效**了（Homebrew 命令失败，
 或 cask 目录抓不下来），此时「0 个可更新」不代表应用都是最新 —— 横幅里有具体原因与下一步。
@@ -115,6 +156,7 @@ brew install --cask --adopt google-chrome
 | `includeStoreApps` | `true` | 是否把商店应用列进来（Windows 是 MSIX、macOS 是 App Store 应用；只展示，不会被更新）。 |
 | `includeRegistryOnly` | `true` | Windows：是否用注册表补齐 winget 未收录的应用（只展示，不能更新）。 |
 | `includeUnmanagedApps` | `true` | macOS：是否把非 Homebrew 管理（拖 DMG / 手动装）的应用也列出来（只展示，不能更新）。 |
+| `checkOfficialSources` | `true` | macOS：是否读取非 Homebrew 应用**自带的**更新源（Sparkle appcast / Electron 更新清单）来判断官网有没有新版。只读；关闭后这些应用一律显示「不可判断」。 |
 | `downloadDir` | 空 | 自定义安装包下载目录；空 = `%USERPROFILE%\Downloads\DSH App Updater`（macOS 为 `~/Downloads/DSH App Updater`）。 |
 | `keepInstallers` | `true` | 更新后保留安装包；`false` 则在安装完成后删掉该应用刚下载的包。 |
 | `hashFallbackUpgrade` | `true` | 下载失败时退回 `winget upgrade` 兜底。 |

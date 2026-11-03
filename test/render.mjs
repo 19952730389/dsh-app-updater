@@ -376,11 +376,12 @@ group("设置面板按平台显示开关");
   await tick();
   tree = rt.render();
   const macSwitches = byClass(tree, "appupd-switch");
-  ok(macSwitches.length === 5, "macOS 显示 5 个开关（跨平台 3 + macOS 专属 2）", macSwitches.length);
+  ok(macSwitches.length === 6, "macOS 显示 6 个开关（跨平台 3 + macOS 专属 3）", macSwitches.length);
   const labels = byClass(tree, "appupd-field-label").map(textOf);
   ok(!labels.includes("自动提权安装"), "macOS 不显示「自动提权安装」", labels);
   ok(!labels.includes("下载失败时回退 winget"), "macOS 不显示「下载失败时回退 winget」", labels);
   ok(labels.includes("包含非 Homebrew 应用"), "macOS 显示「包含非 Homebrew 应用」", labels);
+  ok(labels.includes("查询官网更新源"), "macOS 显示「查询官网更新源」开关", labels);
   ok(labels.includes("包含 App Store 应用"), "macOS 显示「包含 App Store 应用」", labels);
   ok(labels.includes("演练模式") && labels.includes("保留安装包"), "跨平台开关仍然显示", labels);
 }
@@ -419,7 +420,7 @@ const ths = walk(tree).filter((n) => n.type === "th");
 ok(ths.length === 6, "表头 6 列", ths.length);
 const cols = walk(tree).filter((n) => n.type === "col");
 ok(cols.length === 6, "colgroup 6 列", cols.length);
-ok(String(cols[1].props.style.width) === "260px", "应用列默认 260px", cols[1].props.style.width);
+ok(String(cols[1].props.style.width) === "240px", "应用列默认 240px", cols[1].props.style.width);
 ok(byClass(tree, "appupd-banner").length === 0, "演练模式关闭时无警示条");
 ok(byClass(tree, "appupd-nameline").length === 2 || byClass(tree, "appupd-name").length === 2, "应用行渲染正常");
 
@@ -480,6 +481,239 @@ group("1.3.8 回归：无法判断的行不再谎报「已是最新」");
   ok(!latest.includes("已是最新"), "没有任何行被错误标成「已是最新」", latest);
   const unknown = byClass(tree, "appupd-state-unknown")[0];
   ok(unknown && String(unknown.props.title || "").includes("无法判断"), "悬停提示说明「无法判断是否有新版本」", unknown && unknown.props.title);
+}
+
+group("1.3.9 非 Homebrew 应用：官网有新版本 → 「可升级到」显示版本 + 「官网有新版」");
+{
+  statePayload = baseState({
+    platform: "darwin",
+    env: { platform: "darwin", family: "macos", osName: "macOS", archLabel: "Apple Silicon" },
+    apps: {
+      scannedAt: Date.now(),
+      stats: { total: 3, upgradable: 0, manual: 1, unsupported: 3 },
+      items: [
+        // 对不上 cask：查到官网新版，但本插件升不了 → 「官网有新版 / 需手动」
+        {
+          id: "macapp:com.example.kiwihd",
+          name: "kiwihd",
+          version: "1.9.0",
+          available: "",
+          latestVersion: "2.0.14",
+          latestNewer: true,
+          latestVia: "sparkle",
+          publisher: "com.huya.kiwihd",
+          source: "app",
+          hasUpdate: false,
+          updateSupported: false,
+          canAdopt: false,
+          reason: "not-managed",
+          adoptHint: "用 brew install --cask --force <token> 接管后可一键更新",
+        },
+        // 能对上 cask 且版本更新 → 可一键（brew install --cask --force）
+        {
+          id: "macapp:com.colliderli.iina",
+          name: "IINA",
+          version: "1.4.4",
+          available: "1.5.0",
+          latestVersion: "1.5.0",
+          latestNewer: true,
+          latestVia: "sparkle",
+          publisher: "Homebrew cask · iina",
+          source: "app",
+          hasUpdate: true,
+          updateSupported: true,
+          canAdopt: true,
+          adoptToken: "iina",
+          reason: null,
+          adoptHint: "brew install --cask --force iina",
+        },
+        {
+          id: "macapp:com.raycast.macos",
+          name: "Raycast",
+          version: "1.99.0",
+          available: "",
+          publisher: "com.raycast.macos",
+          source: "app",
+          hasUpdate: false,
+          updateSupported: false,
+          reason: "not-managed",
+        },
+        {
+          id: "macapp:com.apple.ActivityMonitor",
+          name: "Activity Monitor",
+          version: "10.14",
+          available: "",
+          publisher: "com.apple.ActivityMonitor",
+          source: "app",
+          hasUpdate: false,
+          updateSupported: false,
+          reason: "system-component",
+        },
+      ],
+    },
+  });
+  rt.reset();
+  await tick();
+  tree = rt.render();
+  await tick();
+  tree = rt.render();
+
+  const manual = byClass(tree, "appupd-state-manual").map(textOf);
+  ok(manual.length === 1 && manual[0] === "官网有新版", "查到官网新版的非 Homebrew 应用显示「官网有新版」", manual);
+
+  // 关键：它绝不能被说成「已是最新」（这正是 1.3.8 修的谎报），也不能叫「可一键更新」
+  const okStates = byClass(tree, "appupd-state-ok").map(textOf);
+  ok(!okStates.includes("已是最新") || byClass(tree, "appupd-state-ok").length === 0, "没有任何行被谎报成「已是最新」", okStates);
+  ok(!byClass(tree, "appupd-state-new").some((n) => textOf(n).includes("IINA")), "不会把 IINA 标成「有新版本（可一键更新）」");
+
+  // 「可升级到」列必须显示真版本号，而不是破折号
+  const verTexts = byClass(tree, "appupd-ver-manual").map(textOf);
+  ok(verTexts.length === 1 && verTexts[0].includes("2.0.14"), "查不到 cask 的行才显示「需手动」版本", verTexts);
+  ok(verTexts.some((t) => t.includes("需手动")), "并带「需手动」标签，避免与可一键更新混淆", verTexts);
+
+  // 关键：能对上 cask 的行必须变成**可点的一键更新**，而不是继续「需手动」
+  const newStates = byClass(tree, "appupd-state-new").map(textOf);
+  ok(newStates.length === 1 && newStates[0] === "有新版本", "对得上 cask 的行变成「有新版本」可一键更新", newStates);
+  const iinaRow = byClass(tree, "appupd-name").find((n) => textOf(n) === "IINA");
+  ok(!!iinaRow, "IINA 行存在");
+  const cbs = byClass(tree, "appupd-cb");
+  ok(cbs.some((c) => c.props.disabled === false), "至少有一行勾选框可用（可一键更新）", cbs.map((c) => c.props.disabled));
+
+  // 悬停提示要说明版本从哪里来
+  const tag = byClass(tree, "appupd-ver-manual")[0];
+  ok(tag && String(tag.props.title || "").includes("2.0.14"), "版本格悬停提示带版本号", tag && tag.props.title);
+  const st = byClass(tree, "appupd-state-manual")[0];
+  ok(st && String(st.props.title || "").includes("Sparkle"), "状态悬停提示说明数据来源", st && st.props.title);
+  ok(st && !String(st.props.title || "").includes("brew install"), "查不到 cask 时不承诺能一键，只指向应用内/官网", st && st.props.title);
+
+  // 状态栏要说出「另有 N 个需手动」，否则用户以为没有更新
+  const statusLine = byClass(tree, "appupd-status-strong").map(textOf).join(" ");
+  ok(statusLine.includes("需手动"), "状态栏提示「另有 N 个官网有新版需手动升级」", statusLine);
+
+  // 「需手动」筛选：只应剩 IINA 一行
+  const segs = byClass(tree, "appupd-seg-btn");
+  const manualBtn = segs.find((b) => textOf(b) === "需手动");
+  ok(!!manualBtn, "筛选栏出现「需手动」分段按钮", segs.map(textOf));
+  if (manualBtn) {
+    await manualBtn.props.onClick();
+    await tick();
+    tree = rt.render();
+    await tick();
+    const names = byClass(tree, "appupd-name").map(textOf);
+    ok(names.length === 1 && names[0] === "kiwihd", "「需手动」筛选只保留「查到新版但升不了」的行", names);
+  }
+
+  // 三个分段必须互斥：「需手动」的行不该同时出现在「未收录」里
+  const unsupBtn = byClass(tree, "appupd-seg-btn").find((b) => textOf(b) === "未收录");
+  if (unsupBtn) {
+    await byClass(tree, "appupd-seg-btn").find((b) => textOf(b) === "全部").props.onClick();
+    await tick();
+    tree = rt.render();
+    await tick();
+    const unsup2 = byClass(tree, "appupd-seg-btn").find((b) => textOf(b) === "未收录");
+    await unsup2.props.onClick();
+    await tick();
+    tree = rt.render();
+    await tick();
+    const names = byClass(tree, "appupd-name").map(textOf);
+    ok(!names.includes("IINA") && !names.includes("kiwihd"), "「未收录」里不再混进「官网有新版」的行", names);
+    ok(names.includes("Activity Monitor") || names.includes("Raycast"), "「未收录」仍保留真正未收录的行", names);
+  }
+}
+
+group("1.3.9 没有官网数据时仍显示「不可判断」，不显示版本号");
+{
+  statePayload = baseState({
+    platform: "darwin",
+    env: { platform: "darwin", family: "macos", osName: "macOS", archLabel: "Apple Silicon" },
+    apps: {
+      scannedAt: Date.now(),
+      stats: { total: 1, upgradable: 0, manual: 0, unsupported: 1 },
+      items: [
+        {
+          id: "macapp:com.raycast.macos",
+          name: "Raycast",
+          version: "1.99.0",
+          available: "",
+          latestVersion: "",
+          latestNewer: false,
+          publisher: "com.raycast.macos",
+          source: "app",
+          hasUpdate: false,
+          updateSupported: false,
+          reason: "not-managed",
+        },
+      ],
+    },
+  });
+  rt.reset();
+  await tick();
+  tree = rt.render();
+  await tick();
+  tree = rt.render();
+  ok(byClass(tree, "appupd-state-unknown").length === 1, "没有官网数据的行仍是「不可判断」", byClass(tree, "appupd-state-unknown").map(textOf));
+  ok(byClass(tree, "appupd-ver-manual").length === 0, "不会凭空显示版本号");
+  ok(byClass(tree, "appupd-state-manual").length === 0, "不会凭空显示「官网有新版」");
+}
+
+group("1.3.11 更新结果面板：点完更新必须能看到成败");
+{
+  statePayload = baseState({
+    platform: "darwin",
+    env: { platform: "darwin", family: "macos", osName: "macOS", archLabel: "Apple Silicon" },
+    update: {
+      running: false,
+      total: 3,
+      done: 3,
+      current: null,
+      error: null,
+      results: [
+        { id: "macapp:com.tencent.qq", ok: false, error: "该应用不由 Homebrew 管理，且 cask 目录里没有它" },
+        { id: "macapp:com.tencent.tenvideo", ok: false, error: "brew install 退出码 1" },
+        { id: "brew:iina", ok: true, verified: "1.5.0" },
+      ],
+    },
+    apps: {
+      scannedAt: Date.now(),
+      stats: { total: 2, upgradable: 1, manual: 0, unsupported: 1 },
+      items: [
+        { id: "macapp:com.tencent.qq", name: "QQ", version: "6.9.99", available: "7.0.0", hasUpdate: true, updateSupported: true, source: "app", reason: null },
+        { id: "macapp:com.tencent.tenvideo", name: "QQLive", version: "2.178.0", available: "2.189.0", hasUpdate: true, updateSupported: true, source: "app", reason: null },
+      ],
+    },
+  });
+  rt.reset();
+  await tick();
+  tree = rt.render();
+  await tick();
+  tree = rt.render();
+
+  const panel = byClass(tree, "appupd-results");
+  ok(panel.length === 1, "更新结束后出现结果面板", panel.length);
+  const head = byClass(tree, "appupd-results-head").map(textOf).join(" ");
+  ok(head.includes("成功 1 / 3"), "面板写明成功 1 / 3", head);
+  ok(head.includes("2 个失败"), "并写明失败数量", head);
+
+  const lines = byClass(tree, "appupd-results-line");
+  ok(lines.length === 2, "失败明细逐条列出（2 条）", lines.length);
+  const lineText = lines.map(textOf).join(" | ");
+  ok(lineText.includes("QQ"), "失败明细带应用名 QQ", lineText);
+  ok(lineText.includes("cask 目录里没有它"), "失败明细带具体原因", lineText);
+}
+
+group("1.3.11 更新进行中不显示结果面板（避免和进度条打架）");
+{
+  statePayload = baseState({
+    platform: "darwin",
+    update: { running: true, total: 3, done: 1, current: "qq", error: null, results: [] },
+  });
+  rt.reset();
+  await tick();
+  tree = rt.render();
+  await tick();
+  tree = rt.render();
+  ok(byClass(tree, "appupd-results").length === 0, "更新进行中不显示结果面板");
+  ok(byClass(tree, "appupd-progress").length === 1, "而是显示进度条");
 }
 
 group("演练模式警示条");
@@ -627,7 +861,7 @@ ok(dom.countListeners("mousemove") === 1 && dom.countListeners("mouseup") === 1,
 dom.fire("mousemove", { clientX: 380 });
 tree = rt.render();
 let colsNow = walk(tree).filter((n) => n.type === "col");
-ok(String(colsNow[1].props.style.width) === "340px", "右拖 80px → 应用列 340px", colsNow[1].props.style.width);
+ok(String(colsNow[1].props.style.width) === "320px", "右拖 80px → 应用列 320px", colsNow[1].props.style.width);
 dom.fire("mousemove", { clientX: 300 + 5000 });
 tree = rt.render();
 colsNow = walk(tree).filter((n) => n.type === "col");
@@ -646,8 +880,8 @@ const gripAfter = byClass(rt.render(), "appupd-grip")[0];
 gripAfter.props.onDoubleClick(Object.assign(fakeEv(), {}));
 tree = rt.render();
 const colsReset = walk(tree).filter((n) => n.type === "col");
-ok(String(colsReset[1].props.style.width) === "260px", "双击恢复默认 260px", colsReset[1].props.style.width);
-ok(JSON.parse(storage.getItem("dsh-appupd-cols-v1")).name === 260, "恢复后的宽度也持久化");
+ok(String(colsReset[1].props.style.width) === "240px", "双击恢复默认 240px", colsReset[1].props.style.width);
+ok(JSON.parse(storage.getItem("dsh-appupd-cols-v1")).name === 240, "恢复后的宽度也持久化");
 
 group("localStorage 不可用时不崩");
 storage.setItem("dsh-appupd-cols-v1", "{not json");

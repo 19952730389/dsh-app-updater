@@ -27,7 +27,20 @@ import {
   pickCask,
   normalizeAppKey,
   buildMacosItems,
+  createCaskMatcher,
+  splitCaskVersion,
+  isSameOrNewerThan,
 } from "../lib/macos.js";
+import {
+  parseAppUpdateYml,
+  electronFeedName,
+  parseElectronFeed,
+  parseSparkleVersions,
+  maxVersion,
+  readUpdateSource,
+  fetchLatestFromSource,
+  checkAppUpdateSources,
+} from "../lib/appcast.js";
 import { admissionGate, hasConnectionCredentials, resolveLegacyLoopbackOptIn, isCrossSiteBrowserRequest, LEGACY_LOOPBACK_ENV } from "../lib/index.js";
 import { settingAppliesTo, Store, defaultSettings } from "../lib/state.js";
 import {
@@ -693,8 +706,10 @@ group("1.3.8 非 Homebrew 应用：给出可执行的收编命令");
     settings: {},
   });
   const iina = withCask.items.find((i) => i.name === "IINA");
-  ok(iina && iina.reason === "not-managed", "非 Homebrew 应用标注 not-managed", iina && iina.reason);
-  ok(iina && iina.adoptHint === "brew install --cask --adopt iina", "能对上 cask 时给具体 token 的 --adopt 命令", iina && iina.adoptHint);
+  /* 1.3.10 起：能对上 cask 且版本更新 → 直接变成可一键（install --force）。
+     所以这里不再停留在「标注 not-managed」，而是给出可执行的目标版本与 token。 */
+  ok(iina && iina.canAdopt === true, "能对上 cask 且版本更新 → 可一键接管升级", iina && iina.canAdopt);
+  ok(iina && iina.adoptHint === "brew install --cask --force iina", "提示给具体 token，且用 --force", iina && iina.adoptHint);
 
   // 对不上 cask 的应用 → 给占位写法，仍然告诉用户下一步是什么
   const noCask = buildMacosItems({
@@ -707,7 +722,10 @@ group("1.3.8 非 Homebrew 应用：给出可执行的收编命令");
     settings: {},
   });
   const mystery = noCask.items.find((i) => i.name === "Mystery");
-  ok(mystery && typeof mystery.adoptHint === "string" && mystery.adoptHint.includes("--adopt"), "对不上 cask 时仍给出 --adopt 提示", mystery && mystery.adoptHint);
+  ok(mystery && typeof mystery.adoptHint === "string" && mystery.adoptHint.includes("--force"), "对不上 cask 时给出占位提示", mystery && mystery.adoptHint);
+  // 关键边界：没有 cask 就**不能**一键，否则会出现「勾得动、点下去必然失败」
+  ok(mystery && mystery.hasUpdate === false && mystery.canAdopt === false, "对不上 cask 的应用不可一键更新", mystery && { hasUpdate: mystery.hasUpdate, canAdopt: mystery.canAdopt });
+  ok(mystery && mystery.reason === "not-managed", "对不上 cask 时仍是「非 Homebrew 管理」", mystery && mystery.reason);
 
   // 系统组件 / App Store 应用不该被建议去 brew 收编
   const sysAndStore = buildMacosItems({
@@ -828,6 +846,434 @@ group("1.3.8 回归：macOS 扫描响应取消");
   const macScan = src.slice(src.indexOf("async function scanMacos"), src.indexOf("async function runMacosUpdates"));
   ok((macScan.match(/throwIfAborted\(\)/g) || []).length >= 3, "枚举后 / 目录前 / 目录后都有取消检查", (macScan.match(/throwIfAborted\(\)/g) || []).length);
   ok(/throw new Error\("扫描已取消"\)/.test(macScan), "取消向上抛，不当故障");
+}
+
+/* ================================================================== *
+ * 1.3.9：非 Homebrew 应用的「官网有没有新版」
+ * ================================================================== */
+
+group("1.3.9 中文应用名不再错配 cask（归一化为空串的坑）");
+{
+  // normalizeAppKey 只保留 [a-z0-9]，中文名全部塌成 ""。旧实现拿空串继续逐 token 比对，
+  // 第一个「声明了纯符号 .app」的 cask 会恒等命中 —— 实测把「爱奇艺」错配成
+  // alipay-key-tool（支付宝开放平台密钥工具），连 --adopt 命令都是错的。
+  ok(normalizeAppKey("爱奇艺") === "", "前提成立：中文名归一化为空串", normalizeAppKey("爱奇艺"));
+  const catalog = parseCaskCatalog([
+    { token: "alipay-key-tool", version: "2.0.4", name: ["Alipay Key Tool"], artifacts: [{ app: ["支付宝开放平台密钥工具.app"] }] },
+  ]);
+  const matcher = createCaskMatcher({ byApp: catalog.byApp, byToken: catalog.byToken, brews: new Map() });
+  const matched = matcher({ name: "爱奇艺", bundleName: "爱奇艺.app" });
+  ok(matched === null, "中文名匹配不上时不乱认 cask，而是返回 null", matched && matched.token);
+
+  const built = buildMacosItems({
+    apps: [{ path: "/Applications/爱奇艺.app", bundleName: "爱奇艺.app", name: "爱奇艺", version: "17.6.1", bundleId: "com.iqiyi.player", appStore: false, system: false }],
+    brews: new Map(),
+    outdated: new Map(),
+    catalog,
+    settings: {},
+  });
+  const iqiyi = built.items.find((i) => i.name === "爱奇艺");
+  ok(iqiyi && iqiyi.publisher === "com.iqiyi.player", "publisher 回落到 bundle id，不是别人的 cask token", iqiyi && iqiyi.publisher);
+  ok(iqiyi && !iqiyi.adoptHint.includes("alipay-key-tool"), "--adopt 命令不会指向错误的应用", iqiyi && iqiyi.adoptHint);
+}
+
+group("1.3.9 Sparkle appcast 解析");
+{
+  // 真实形状（IINA 的 appcast，已精简）：shortVersionString 是面向用户的版本，
+  // sparkle:version(180) 是构建号，绝不能拿来比较。
+  const xml = `<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0"><channel>
+    <title>IINA</title>
+    <item><title>1.5.0</title><pubDate>Fri, 02 Oct 2026 16:48:15 -0400</pubDate>
+      <sparkle:version>180</sparkle:version><sparkle:shortVersionString>1.5.0</sparkle:shortVersionString>
+      <enclosure url="https://dl-portal.iina.io/IINA.v1.5.0.dmg" length="113048935" type="application/octet-stream"/>
+    </item>
+    <item><title>1.4.4</title><sparkle:version>174</sparkle:version>
+      <sparkle:shortVersionString>1.4.4</sparkle:shortVersionString></item>
+  </channel></rss>`;
+  const versions = parseSparkleVersions(xml);
+  ok(versions.length === 2, "两条 item 都被解析出来", versions);
+  ok(maxVersion(versions) === "1.5.0", "取最大版本 1.5.0（不是构建号 180）", maxVersion(versions));
+  ok(maxVersion(versions) !== "180", "构建号绝不会被当成版本");
+
+  // 只有 title、没有 shortVersionString 的老 appcast 也要能读
+  const old = `<item><title>2.0.14</title><sparkle:version>931</sparkle:version></item>`;
+  ok(maxVersion(parseSparkleVersions(old)) === "2.0.14", "老格式（只有 title）也能读出 2.0.14");
+
+  // 带 channel 的 item 是灰度通道：正式通道有货时不能用它
+  const ch = `<item><title>9.9.9</title><sparkle:shortVersionString>9.9.9</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel></item>
+    <item><title>1.2.0</title><sparkle:shortVersionString>1.2.0</sparkle:shortVersionString></item>`;
+  ok(maxVersion(parseSparkleVersions(ch)) === "1.2.0", "有正式版时不把 beta 通道当最新", maxVersion(parseSparkleVersions(ch)));
+  const onlyCh = `<item><title>3.0.0</title><sparkle:shortVersionString>3.0.0</sparkle:shortVersionString>
+      <sparkle:channel>beta</sparkle:channel></item>`;
+  ok(maxVersion(parseSparkleVersions(onlyCh)) === "3.0.0", "整个 appcast 只有通道包时仍可用（不至于永远无解）");
+
+  ok(maxVersion([]) === "", "空列表返回空串");
+  ok(maxVersion(["garbage", "1.0.0"]) === "1.0.0", "无版本形状的条目被跳过");
+}
+
+group("1.3.9 Electron app-update.yml 解析");
+{
+  const yml = `provider: generic
+url: https://api.bilibili.com/x/elec-frontend/update/
+updaterCacheDirName: bilibili-updater
+`;
+  const parsed = parseAppUpdateYml(yml);
+  ok(parsed && parsed.url === "https://api.bilibili.com/x/elec-frontend/update/", "generic provider 的 url 被读出", parsed && parsed.url);
+  ok(parsed && parsed.channel === "", "没有 channel 时为空", parsed && parsed.channel);
+  ok(electronFeedName("") === "latest-mac.yml", "无 channel → latest-mac.yml", electronFeedName(""));
+  ok(electronFeedName("latest") === "latest-mac.yml", "channel=latest 也落到 latest-mac.yml", electronFeedName("latest"));
+
+  const nightly = parseAppUpdateYml("provider: generic\nurl: https://download.deepseek.com/dsh-desk/feeds/mac-arm64/\nchannel: nightly\n");
+  ok(nightly && electronFeedName(nightly.channel) === "nightly-mac.yml", "channel=nightly → nightly-mac.yml", nightly && electronFeedName(nightly.channel));
+
+  // 空 url 是真实存在的（本机 NuPhyIO / QQ / aDrive 的 app-update.yml 都是 url: ''）
+  ok(parseAppUpdateYml("provider: generic\nurl: ''\n") === null, "url 为空串时判定为「没有可用更新源」");
+  ok(parseAppUpdateYml("provider: github\nurl: https://example.com/\n") === null, "非 generic provider 不猜路径");
+  ok(parseAppUpdateYml("") === null, "空文件返回 null");
+
+  const feed = `version: 1.20.0
+files:
+  - url: bilibili-v1.20.0.zip
+    sha512: vxdsVTLveLbchRxrRhBGkQhjG18iKItf7c0dDPSemDgUkPYOgiVGyYo7Abhy6LHiUlmLKbs8lvlIbZLuWEiPyg==
+    size: 183799227
+`;
+  ok(parseElectronFeed(feed) === "1.20.0", "electron 清单顶层 version 被读出", parseElectronFeed(feed));
+  ok(parseElectronFeed("releaseDate: 2026-01-01\n") === "", "没有 version 字段时返回空串");
+  ok(parseElectronFeed("version: not-a-version\n") === "", "不是版本形状的 version 被拒绝");
+}
+
+group("1.3.9 readUpdateSource：从 .app 里读出更新源");
+{
+  // 假文件系统：只需要 readFile 能返回 app-update.yml
+  const mkRead = (files) => async (p) => {
+    const hit = Object.keys(files).find((k) => p.endsWith(k));
+    if (!hit) {
+      const err = new Error("ENOENT");
+      err.code = "ENOENT";
+      throw err;
+    }
+    return files[hit];
+  };
+
+  const electron = await readUpdateSource("/Applications/X.app", {
+    readFileImpl: mkRead({ "app-update.yml": "provider: generic\nurl: https://example.com/feeds/\nchannel: nightly\n" }),
+    plist: async () => "",
+  });
+  ok(electron && electron.kind === "electron" && electron.url === "https://example.com/feeds/", "优先识别 Electron app-update.yml", electron);
+  ok(electron && electron.channel === "nightly", "channel 一并带出", electron && electron.channel);
+
+  const sparkle = await readUpdateSource("/Applications/IINA.app", {
+    readFileImpl: mkRead({}),
+    plist: async () => "https://www.iina.io/appcast.xml\n",
+  });
+  ok(sparkle && sparkle.kind === "sparkle" && sparkle.url === "https://www.iina.io/appcast.xml", "没有 app-update.yml 时回落到 SUFeedURL", sparkle);
+
+  const blank = await readUpdateSource("/Applications/i4Tools.app", {
+    readFileImpl: mkRead({}),
+    plist: async () => "",
+  });
+  ok(blank === null, "SUFeedURL 为空串（i4Tools 的真实情况）判定为没有更新源", blank);
+
+  const off = await readUpdateSource("/Applications/Mystery.app", {
+    readFileImpl: mkRead({ "app-update.yml": "provider: generic\nurl: ''\n" }),
+    plist: async () => "ftp://nope/appcast.xml",
+  });
+  ok(off === null, "非法协议（ftp://）与非 http(s) 的 url 都不算更新源", off);
+}
+
+group("1.3.9 fetchLatestFromSource / checkAppUpdateSources");
+{
+  const calls = [];
+  const fakeFetch = (url) => {
+    calls.push(url);
+    if (url.includes("iina.io")) {
+      return `<item><title>1.5.0</title><sparkle:shortVersionString>1.5.0</sparkle:shortVersionString></item>`;
+    }
+    if (url.endsWith("latest-mac.yml")) return "version: 2.4.0\nfiles: []\n";
+    if (url.endsWith("nightly-mac.yml")) return "version: 3.0.0-nightly\n";
+    return null;
+  };
+
+  const sparkleV = await fetchLatestFromSource({ kind: "sparkle", url: "https://www.iina.io/appcast.xml" }, { fetchImpl: fakeFetch });
+  ok(sparkleV === "1.5.0", "Sparkle 源查出 1.5.0", sparkleV);
+
+  const electronV = await fetchLatestFromSource({ kind: "electron", url: "https://example.com/feeds/", channel: "" }, { fetchImpl: fakeFetch });
+  ok(electronV === "2.4.0", "Electron 源按 latest-mac.yml 查出 2.4.0", electronV);
+  ok(calls.some((u) => u === "https://example.com/feeds/latest-mac.yml"), "拼接出的清单地址正确", calls);
+
+  const nightlyV = await fetchLatestFromSource({ kind: "electron", url: "https://example.com/feeds/", channel: "nightly" }, { fetchImpl: fakeFetch });
+  ok(nightlyV === "3.0.0-nightly", "带 channel 时请求 <channel>-mac.yml", nightlyV);
+
+  ok((await fetchLatestFromSource(null, { fetchImpl: fakeFetch })) === "", "没有源时返回空串，不抛");
+  ok((await fetchLatestFromSource({ kind: "sparkle", url: "https://x/y" }, { fetchImpl: () => null })) === "", "抓取失败返回空串，不抛");
+
+  // 批量：一个读不到源、一个抓取失败、一个正常 —— 只有正常的进结果
+  const targets = [
+    { key: "/Applications/IINA.app", path: "/Applications/IINA.app" },
+    { key: "/Applications/NoSource.app", path: "/Applications/NoSource.app" },
+    { key: "/Applications/Broken.app", path: "/Applications/Broken.app" },
+  ];
+  const readSourceImpl = async (p) => {
+    if (p.includes("NoSource")) return null;
+    if (p.includes("Broken")) return { kind: "sparkle", url: "https://broken/appcast.xml" };
+    return { kind: "sparkle", url: "https://www.iina.io/appcast.xml" };
+  };
+  const fetchLatestImpl = async (source) => (source.url.includes("broken") ? "" : "1.5.0");
+  const map = await checkAppUpdateSources(targets, { readSourceImpl, fetchLatestImpl });
+  ok(map.size === 1, "只收录真正查到版本的应用", [...map.keys()]);
+  ok(map.get("/Applications/IINA.app")?.version === "1.5.0", "结果按 path 索引", map.get("/Applications/IINA.app"));
+  ok(map.get("/Applications/IINA.app")?.via === "sparkle", "记录了来源类型（用于悬停提示）", map.get("/Applications/IINA.app"));
+
+  const empty = await checkAppUpdateSources([], {});
+  ok(empty.size === 0, "空输入直接返回，不开并发", empty.size);
+}
+
+group("1.3.9 buildMacosItems：非 Homebrew 应用也能显示官网最新版本");
+{
+  const catalog = parseCaskCatalog([
+    { token: "iina", version: "1.5.0", name: ["IINA"], artifacts: [{ app: ["IINA.app"] }] },
+  ]);
+  const apps = [
+    { path: "/Applications/IINA.app", bundleName: "IINA.app", name: "IINA", version: "1.4.4", bundleId: "com.colliderli.iina", appStore: false, system: false },
+  ];
+  const official = new Map([["/Applications/IINA.app", { version: "1.5.0", via: "sparkle" }]]);
+
+  const withOfficial = buildMacosItems({ apps, brews: new Map(), outdated: new Map(), catalog, official, settings: {} });
+  const iina = withOfficial.items.find((i) => i.name === "IINA");
+  ok(iina.latestVersion === "1.5.0", "非 Homebrew 应用也拿到官网最新版 1.5.0", iina.latestVersion);
+  ok(iina.latestNewer === true, "并判定为「有更新」", iina.latestNewer);
+  ok(iina.latestVia === "sparkle", "来源一并带出", iina.latestVia);
+
+  /* 1.3.10：cask 目录里有它、且版本更新 → **可以一键**（brew install --cask --force）。
+     这条边界改了：以前一律「只能手动」，但那等于把明明能自动完成的事留给用户。 */
+  ok(iina.canAdopt === true, "对得上 cask 且版本更新 → 允许一键接管升级", iina.canAdopt);
+  ok(iina.adoptToken === "iina", "带上可用于安装的 cask token", iina.adoptToken);
+  ok(iina.hasUpdate === true && iina.updateSupported === true, "因此变为可一键更新", iina);
+  ok(iina.available === "1.5.0", "available 就是 cask 的目标版本（可执行）", iina.available);
+  ok(iina.reason === null, "已可更新，不再挂「非 Homebrew 管理」原因", iina.reason);
+  ok(/--force/.test(iina.adoptHint) && !/--adopt\b/.test(iina.adoptHint), "提示用 --force 而不是 --adopt（后者对升级无效）", iina.adoptHint);
+
+  // 官网版本比已装旧 → 不算有更新（防止把旧版误报成新版）
+  const stale = buildMacosItems({ apps, brews: new Map(), outdated: new Map(), catalog, official: new Map([["/Applications/IINA.app", { version: "1.3.0", via: "sparkle" }]]), settings: {} });
+  const staleIina = stale.items.find((i) => i.name === "IINA");
+  ok(staleIina.latestNewer === false, "官网版本更旧时 latestNewer 为 false", staleIina.latestNewer);
+  ok(staleIina.latestVersion === "1.3.0", "但版本号本身仍可见（供人工判断）", staleIina.latestVersion);
+
+  // 没有查到源 → 不出现 latestVersion，界面应显示「不可判断」
+  const noSource = buildMacosItems({ apps, brews: new Map(), outdated: new Map(), catalog, settings: {} });
+  const plain = noSource.items.find((i) => i.name === "IINA");
+  ok(plain.latestVersion === "" && plain.latestNewer === false, "没有官网数据时保持「不可判断」", plain);
+
+  // Homebrew 管理的应用不受 official 影响：它有自己的权威来源
+  const managedApps = [Object.assign({}, apps[0])];
+  const managed = buildMacosItems({
+    apps: managedApps,
+    brews: new Map([["iina", "1.4.4"]]),
+    outdated: new Map(),
+    catalog,
+    official: new Map([["/Applications/IINA.app", { version: "2.0.0", via: "sparkle" }]]),
+    settings: {},
+  });
+  const mIina = managed.items.find((i) => i.name === "IINA");
+  ok(mIina.hasUpdate === true && mIina.available === "1.5.0", "Homebrew 管理时仍用 cask 目录的 1.5.0", mIina && mIina.available);
+  ok(mIina.latestVersion === "", "不重复采用 appcast 的 2.0.0（避免两个源打架）", mIina.latestVersion);
+
+  // 排序：可一键更新 → 官网有新版需手动 → 其它
+  const sorted = buildMacosItems({
+    apps: [
+      { path: "/Applications/ZZZ.app", bundleName: "ZZZ.app", name: "Zzz", version: "1.0", bundleId: "a.z", appStore: false, system: false },
+      { path: "/Applications/IINA.app", bundleName: "IINA.app", name: "IINA", version: "1.4.4", bundleId: "com.colliderli.iina", appStore: false, system: false },
+      { path: "/Applications/AAA.app", bundleName: "AAA.app", name: "Aaa", version: "1.0", bundleId: "a.a", appStore: false, system: false },
+    ],
+    brews: new Map(),
+    outdated: new Map(),
+    catalog,
+    official: new Map([["/Applications/IINA.app", { version: "1.5.0", via: "sparkle" }]]),
+    settings: {},
+  });
+  ok(sorted.items[0].name === "IINA", "「官网有新版」的行排在最前面", sorted.items.map((i) => i.name));
+}
+
+group("1.3.9 扫描编排：官网查询只覆盖「非系统 / 非商店 / 非 Homebrew」的应用");
+{
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  const macScan = src.slice(src.indexOf("async function scanMacos"), src.indexOf("async function runMacosUpdates"));
+  ok(/if \(app\.system\) continue;/.test(macScan), "系统组件不查官网（它们不由任何更新源负责）", macScan.includes("app.system"));
+  ok(/cask && brews\.has\(cask\.token\)/.test(macScan), "Homebrew 管理的应用不查官网（已有更权威来源）");
+  ok(/checkOfficialSources !== false/.test(macScan), "开关默认开启，且只在显式 false 时关闭");
+  ok(/official/.test(macScan) && /buildMacosItems\(\{[^}]*official/.test(macScan), "查询结果确实传进了 buildMacosItems", macScan.includes("official,"));
+}
+
+group("1.3.10 非 Homebrew 应用的一键更新（install --force 接管）");
+{
+  // plan 必须传到 runMacosUpdates：漏传时界面勾得动、后台却一律报「无对应 cask」
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  ok(/return runMacosUpdates\(\{[^}]*plan[^}]*\}\)/.test(src), "runUpdates 把 plan 传给 runMacosUpdates", (src.match(/return runMacosUpdates\([^)]*\)/) || [])[0]);
+
+  const macUpd = src.slice(src.indexOf("async function runMacosUpdates"), src.indexOf("export ", src.indexOf("async function runMacosUpdates")));
+  ok(/install", "--cask", "--force"/.test(macUpd), "非 Homebrew 应用走 brew install --cask --force", "args");
+  ok(/upgrade", "--cask"/.test(macUpd), "Homebrew 管理的应用仍走 brew upgrade --cask", "args");
+  ok(!/"--adopt"/.test(macUpd), "升级路径里不出现 --adopt（它只接受版本完全一致的 app）", "adopt");
+  ok(/forceInstall\.get/.test(macUpd), "按 plan 里的 adoptToken 解析目标应用");
+
+  // --adopt 的语义边界：文档与提示里都不能再教用户用 --adopt 做升级
+  const macosSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/macos.js"), "utf8");
+  ok(!/brew install --cask --adopt \$\{/.test(macosSrc), "adoptHint 不再给出 --adopt 命令");
+  ok(/brew install --cask --force \$\{/.test(macosSrc), "adoptHint 给出 --force 命令");
+}
+
+group("1.3.11 更新结果的可见性与可信度");
+{
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  const idx = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/index.js"), "utf8");
+
+  // 1) 复核必须读磁盘，不能只信 brew list（brew 记录 ≠ 磁盘事实）
+  ok(/readBundleVersionByToken/.test(src), "更新后有磁盘版本复核函数");
+  /* 判据已改：不再要求「与 brew 记录逐字符相等」（cask 串与磁盘 CFBundleShortVersionString
+     是两套编号体系，实测把 9 个真实成功的升级报成失败）。现在按「磁盘版本 >= 安装前版本」判。 */
+  ok(/磁盘仍是旧版本：装前 \$\{before\}/.test(src) || /okByDisk/.test(src), "磁盘仍是旧版时报失败（而不是看 brew 记录是否相等）");
+  ok(/brewErrorLine/.test(src), "失败原因从 stderr 里挑真正的错误行");
+  ok(!/firstLine\(outputText\(upRes\)\)/.test(src), "不再把 stdout 首行（==> Installing Cask）当失败原因");
+  ok(/mainVersion/.test(src), "多段版本串（版本,构建号,哈希）先取主版本段再比");
+  ok(/split\(\/\[_\+\]\/\)/.test(src), "主版本段还要剥掉下划线后的构建号（QQ: 7.0.0_260812_01 → 7.0.0）");
+  const helper = src.slice(src.indexOf("export async function readBundleVersionByToken"));
+  ok(/plutil/.test(helper) && /CFBundleShortVersionString/.test(helper), "复核读的是 Info.plist 的 CFBundleShortVersionString");
+  ok(/artifacts/.test(helper), "按 cask 声明的 .app 名去找，不靠猜路径");
+
+  // 2) 更新结束后不能立刻重扫：否则界面立刻变「扫描中」，用户看不到结果
+  const finallyBlock = idx.slice(idx.indexOf("} finally {", idx.indexOf("updatePromise = (async")));
+  ok(/setTimeout/.test(finallyBlock), "更新结束后延迟重扫，先给结果留展示窗口");
+  ok(/okCount/.test(finallyBlock), "收尾日志写明成功/失败条数");
+
+  // 3) forceInstall 只认 adoptToken（加 latestNewer 会让可接管的应用全部失败）
+  const macUpd = src.slice(src.indexOf("async function runMacosUpdates"));
+  ok(/if \(it\.adoptToken\)/.test(macUpd), "forceInstall 判据只用 adoptToken");
+  ok(!/it\.adoptToken && it\.latestNewer/.test(macUpd), "不再把 latestNewer 当前置条件（那会让 13 个应用全失败）");
+}
+
+group("1.3.11 版本复核的字符串归一（真实样本）");
+{
+  // 复刻 engine.js 里的归一规则，锁住「cask 记录 vs 磁盘版本」的可比性
+  const mainVersion = (v) => String(v || "").split(",")[0].split(/[_+]/)[0].trim();
+  ok(mainVersion("7.0.0_260812_01,9.9.33,126b7ce6") === "7.0.0", "QQ：多段+构建号归一到 7.0.0", mainVersion("7.0.0_260812_01,9.9.33,126b7ce6"));
+  ok(mainVersion("5.3.8,6D1470FEA8573BFF3E422BDE1DEF14CD") === "5.3.8", "腾讯柠檬：带哈希归一到 5.3.8");
+  ok(mainVersion("1.5.0") === "1.5.0", "普通版本串不受影响");
+  ok(mainVersion("3.47.2.407,8f792a0af699fd29e5a7f6b461a4c2ee") === "3.47.2.407", "腾讯会议：四段版本保留");
+  // 归一并不会把不同版本误判成相等
+  ok(mainVersion("7.0.0_260812_01,9.9.33") !== mainVersion("7.1.0"), "归一后仍能区分真正不同的版本");
+}
+
+group("1.3.12 pkg 型 cask（需 sudo）不得当作可一键更新");
+{
+  // 真实样本：awesun / uuremote 的 artifacts 里有 pkg → 要 sudo。
+  // 后台进程没有终端，`sudo` 必然报 a terminal is required → 装不了。
+  const pkgCatalog = parseCaskCatalog([
+    { token: "awesun", version: "16.6.0.32198", name: ["AweSun"], artifacts: [{ pkg: ["AweSun.pkg"] }, { uninstall: [] }] },
+    { token: "uuremote", version: "4.45.0", name: ["UURemote"], artifacts: [{ pkg: ["UURemote.pkg"] }] },
+  ]);
+  const sudoApps = [
+    { path: "/Applications/AweSun.app", bundleName: "AweSun.app", name: "AweSun", version: "16.5.0", bundleId: "com.oray.sunlogin.macclient", appStore: false, system: false },
+    { path: "/Applications/UURemote.app", bundleName: "UURemote.app", name: "UURemote", version: "4.42.0", bundleId: "com.netease.uuremote", appStore: false, system: false },
+  ];
+  const sudoBuilt = buildMacosItems({ apps: sudoApps, brews: new Map(), outdated: new Map(), catalog: pkgCatalog, settings: {} });
+  const awe = sudoBuilt.items.find((i) => i.name === "AweSun");
+  ok(awe.needsSudo === true, "pkg 型 cask 被标记 needsSudo", awe.needsSudo);
+  ok(awe.hasUpdate === false && awe.canAdopt === false, "因此不算可一键更新（勾得动必然失败）", { hasUpdate: awe.hasUpdate, canAdopt: awe.canAdopt });
+  ok(awe.latestNewer === true && awe.latestVersion === "16.6.0.32198", "但版本信息保留，界面显示「需手动」而不是退回不可判断", { latestVersion: awe.latestVersion, latestNewer: awe.latestNewer });
+  ok(awe.latestVia === "cask", "来源标注为 cask 目录", awe.latestVia);
+
+  // 对照：纯 .app 的 cask 不需要 sudo，仍可一键
+  const appCatalog = parseCaskCatalog([
+    { token: "iina", version: "1.5.0", name: ["IINA"], artifacts: [{ app: ["IINA.app"] }] },
+  ]);
+  const okBuilt = buildMacosItems({
+    apps: [{ path: "/Applications/IINA.app", bundleName: "IINA.app", name: "IINA", version: "1.4.4", bundleId: "com.colliderli.iina", appStore: false, system: false }],
+    brews: new Map(), outdated: new Map(), catalog: appCatalog, settings: {},
+  });
+  const iina = okBuilt.items.find((i) => i.name === "IINA");
+  ok(iina.needsSudo === false && iina.canAdopt === true && iina.hasUpdate === true, "纯 .app 型 cask 不受影响，仍可一键", { needsSudo: iina.needsSudo, canAdopt: iina.canAdopt });
+
+  // 引擎侧必须提前跳过，而不是跑到 sudo 那一步才失败
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  ok(/caskNeedsSudo/.test(src), "引擎有 caskNeedsSudo 探测");
+  ok(/pkg 安装器需要 sudo/.test(src), "遇到 pkg cask 提前给出终端命令，而不是让 sudo 报错");
+}
+
+group("1.3.13 cask 版本串含构建号：不得把「已是最新」误报成「有新版本」");
+{
+  /* 这是本机实测的完整样本。Homebrew 的 cask version 是「主版本.构建号」拼接，
+     而磁盘的 CFBundleShortVersionString 只有主版本 —— 直接 isNewer 会把构建号
+     当成新版本号，导致 8 个**已经是最新**的应用反复被提示「有新版本」，
+     点下去装完还是老样子。下表左=cask，中=磁盘 short，右=磁盘 bundle。 */
+  const SAME = [
+    ["2.189.0.55910", "2.189.0", "55910"],        // QQLive
+    ["3.47.2.407,8f792a0af699fd29e5a7f6b461a4c2ee", "3.47.2", "407"], // 腾讯会议
+    ["5.80.8.66675", "5.80.8", "66675"],           // 迅雷
+    ["4.2.0.16,270352", "4.2.0", "270352"],        // 微信
+    ["5.0.13.95049", "5.0.13", "95049"],           // 企业微信
+    ["5.9.3.42398134-d4692421", "5.9.3", "5.9.3"], // WorkBuddy
+    ["5.9.4.42593613-fa0a0901", "5.9.4", "5.9.4"], // WorkBuddy AI
+  ];
+  for (const [cask, short, build] of SAME) {
+    const target = splitCaskVersion(cask);
+    const same = isSameOrNewerThan({ target, installed: { version: short, bundleVersion: build } });
+    ok(same === true, `已是最新：${cask} vs 磁盘 ${short}/${build}`, { target, same });
+  }
+
+  // 真有更新的不能被漏掉
+  const NEWER = [
+    ["1.5.0", "1.4.4", "174"],     // IINA
+    ["1.20.0", "1.18.0", "180"],   // 哔哩哔哩
+    ["16.6.0.32198", "16.5.0", "1650"], // AweSun
+    ["3.7.0,452316191", "3.5.1", "351"], // 汽水音乐
+  ];
+  for (const [cask, short, build] of NEWER) {
+    const target = splitCaskVersion(cask);
+    const same = isSameOrNewerThan({ target, installed: { version: short, bundleVersion: build } });
+    ok(same === false, `真有更新：${cask} vs 磁盘 ${short}/${build} 必须判为需要更新`, { target, same });
+  }
+
+  // 解析本身的可读性
+  ok(splitCaskVersion("2.189.0.55910").build === "55910", "构建号 55910 被单独拆出");
+  ok(splitCaskVersion("2.189.0.55910").short === "2.189.0", "主版本保留 2.189.0");
+  ok(splitCaskVersion("1.5.0").build === "", "1.5.0 这种语义版本不会把末段 0 当构建号");
+  ok(splitCaskVersion("5.9.3.42398134-d4692421").build === "42398134", "带哈希尾巴的构建号也能拆出");
+
+  // buildMacosItems 全链路：8 个误报里最典型的微信必须判为已最新
+  const cat = parseCaskCatalog([{ token: "wechat", version: "4.2.0.16,270352", name: ["WeChat"], artifacts: [{ app: ["WeChat.app"] }] }]);
+  const built = buildMacosItems({
+    apps: [{ path: "/Applications/WeChat.app", bundleName: "WeChat.app", name: "WeChat", version: "4.2.0", bundleVersion: "270352", bundleId: "com.tencent.xinWeChat", appStore: false, system: false }],
+    brews: new Map([["wechat", "4.2.0.16,270352"]]), outdated: new Map(), catalog: cat, settings: {},
+  });
+  const wx = built.items.find((i) => i.name === "WeChat");
+  ok(wx.hasUpdate === false, "微信（cask 4.2.0.16 / 磁盘 4.2.0+270352）判为已最新", { hasUpdate: wx.hasUpdate, available: wx.available });
+}
+
+group("1.3.14 下载源可达性探测（不要陪跑两小时）");
+{
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  ok(/export async function probeCaskDownloadUrl/.test(src), "有下载源探测函数");
+  ok(/clearCaskInfoCache/.test(src), "cask info 带缓存，避免同一 cask 反复起 brew");
+  ok(/brew install --cask --force/.test(src) && /probeCaskDownloadUrl\(token/.test(src), "更新前先探测下载源");
+
+  /* 关键教训必须锁住：**HEAD 不足以判断**。本机实测 github.com 首页 HEAD 200/302 只要 1 秒，
+     但同一 URL 跟随重定向下载 30 秒只收到 0 字节 —— Releases 的实体走
+     objects.githubusercontent.com。所以探测必须是「真实下载首 1MB」。 */
+  const fn = src.slice(src.indexOf("export async function probeCaskDownloadUrl"), src.indexOf("export async function readBundleVersionByToken"));
+  ok(/"-r", "0-1048576"/.test(fn), "探测是真实下载首 1MB，不是 HEAD");
+  ok(/-sSL/.test(fn), "跟随重定向（-L），否则看不到真实链路");
+  ok(!/"-sSI"/.test(fn), "不再用 HEAD 判断可达性");
+  ok(/speed >= 10240/.test(fn) || /speed >=/.test(fn), "用量到的速度判定，而不是只看 HTTP 200");
+  ok(/速度极慢/.test(fn), "「太慢」与「完全不通」分开说明（用户下一步不同）");
+
+  // 只探易失败的 github 主机，别给每次更新加无谓延迟
+  ok(/NEEDS_PROBE/.test(fn), "只对 github 系主机探测，其它 CDN 直接放过");
+  ok(/github\\.com|api\\.github\\.com/.test(fn), "探测名单包含 github.com");
+
+  // 探测失败必须跳过并给出可操作原因，不能让 brew 卡两小时
+  ok(/if \(!probe\.ok\)/.test(src), "探测失败时跳过该应用");
+  ok(/配代理/.test(fn), "给出「配代理」这个具体下一步");
 }
 
 /* ---------------- 结果 ---------------- */

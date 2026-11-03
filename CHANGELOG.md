@@ -2,6 +2,287 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.14] — 2026-11-03
+
+### 新增：更新前探测下载源，不再陪跑两小时
+
+用户实测反馈：「balenaEtcher 明明是 GitHub 上下的，为什么更新卡住不动？」。
+根因是 Homebrew 的 cask 把下载地址写死：
+
+```
+url: https://github.com/balena-io/etcher/releases/download/v2.1.9/…arm64.dmg
+homepage: https://balena.io/etcher        ← 只用于展示，brew 不用它
+```
+
+官网 `etcher.balena.io` 能打开，但它的下载按钮本质上是去问 GitHub API 再跳 Releases，
+**绕不开 GitHub**。而 `github.com` 在本机网络下不可达/极慢时，
+`brew install --cask --force` 会卡在「解析下载地址」最长 2 小时。
+
+新增 `probeCaskDownloadUrl()`：动手前对 github 系主机发一次**真实的首 1MB 下载**，
+量到速度就放行，量不到就立刻报原因并跳过。
+
+> **重要教训（踩过两次）**：`HEAD` 判断不可用。本机实测 github.com 首页
+> `HEAD` 返回 200/302 只要 1 秒，但同一个 URL 跟随重定向真正下载时
+> 30 秒收到 **0 字节**——Releases 的实体走 `objects.githubusercontent.com`，
+> 那条链路单看首页完全测不出来。所以必须 `-r 0-1048576` 真下 1MB。
+
+失败时区分两种原因（用户下一步不同）：
+- 「完全访问不到」→ 链路不通，配代理
+- 「链路能通但速度极慢（10 秒只下到 270 KB，27 KB/s）」→ 太慢，配代理或官网手动下
+
+实测：balenaEtcher 从「卡到 2 小时超时」变成 **10.3 秒**给出明确结论。
+
+### 优化：cask info 不再重复调用
+
+`caskNeedsSudo` / `readBundleVersionByToken` 各自起一次 `brew info --cask --json=v2`
+（每次最长 60 秒），同一个 cask 在一次更新里会被问三次。现在共享 `loadCaskInfo()`
++ 进程内缓存，更新结束时 `clearCaskInfoCache()` 清掉，避免装前信息污染复核。
+
+### 测试
+
+`unit 334/334`（新增 12 条）、`render 85/85`、`deny 12/12`。
+其中专门锁住「不能用 HEAD 判断」这条教训，防止以后改回去。
+
+## [1.3.13] — 2026-11-03
+
+### 修复：8 个「有新版本」是**误报**，它们其实早就是最新版
+
+这是本版最重要的一条。Homebrew 的 cask `version` 是「主版本 + 构建号」的拼接写法，
+而磁盘的 `CFBundleShortVersionString` 只有主版本：
+
+| 应用 | cask version | 磁盘 short | 磁盘 bundle |
+|---|---|---|---|
+| QQLive | `2.189.0.55910` | `2.189.0` | 55910 |
+| 腾讯会议 | `3.47.2.407,…` | `3.47.2` | 407 |
+| 迅雷 | `5.80.8.66675` | `5.80.8` | 66675 |
+| 微信 | `4.2.0.16,270352` | `4.2.0` | 270352 |
+| 企业微信 | `5.0.13.95049` | `5.0.13` | 95049 |
+| WorkBuddy | `5.9.3.42398134-d4692421` | `5.9.3` | 5.9.3 |
+
+拿 `2.189.0.55910` 直接和 `2.189.0` 比，第 4 段会被当成「更高的版本」，
+于是**已经是最新**的 8 个应用全被报成「有新版本」。用户点「全部更新」，
+装完再看，版本号还是 `2.189.0` —— 因为本来就没得升。
+
+新增 `splitCaskVersion()` / `isSameOrNewerThan()`：把 cask 串拆成
+「主版本 + 构建号」，再拿磁盘的 `CFBundleShortVersionString` **和**
+`CFBundleVersion` 一起比对。`readAppBundle` 现在会保留 `bundleVersion`。
+
+四种真实写法都要认（各有回归断言）：
+- `2.189.0.55910` —— 末段远大于主版本段
+- `3.47.2.407` —— 407 只有 3 位，靠「大于主版本」识别
+- `4.2.0.16,270352` —— 16 很小，靠逗号后那个 bundle 号才认得出
+- `5.9.3.42398134-d4692421` —— 构建号后接哈希
+
+### 修复：版本列显示不全
+
+`available` 列默认 96px，装了 `3.47.2.407,8f792a0af699fd29e5a7f6b461a4c2ee`
+这种 40 字符的串只能看到前半截，用户没法用这列判断有没有更新。
+默认宽度改为 `name 240 / version 112 / available 168 / state 96`，
+并保留拖动调整。
+
+### 测试
+
+`unit 322/322`（新增 16 条，含 7 个「已是最新」+ 4 个「真有更新」的真实样本）、
+`render 85/85`、`deny 12/12`。
+真实扫描：可一键更新从 8 个降为 1 个（balenaEtcher，因 GitHub 不可达会失败），
+那 7 个误报全部正确归为「已是最新」。
+
+## [1.3.12] — 2026-11-03
+
+### 修复：9 个「版本不一致」是把**成功的升级**报成了失败
+
+判据写错。cask 的 `version` 与磁盘的 `CFBundleShortVersionString` 是**两套编号体系**：
+
+| 应用 | cask 记录 | 磁盘实际 |
+|---|---|---|
+| 微信 | `4.2.0.16,270352` | `4.2.0` |
+| 腾讯会议 | `3.47.2.407,8f7920…` | `3.47.2` |
+| QQLive | `2.189.0.55910` | `2.189.0` |
+
+cask 串的末段往往就是磁盘的 `CFBundleVersion` 构建号，主版本本来就对不上。
+旧逻辑要求「与 brew 记录逐字符相等」，于是 9 个真实升级全被标失败。
+现改为按**磁盘版本 >= 安装前版本**判定（升级只可能往前走；磁盘仍是旧版才算没装上）。
+
+### 修复：失败原因显示成 `==> Installing Cask awesun`
+
+`firstLine(outputText(res))` 取的是 stdout 首行，那是**过程输出**，不是错误。
+新增 `brewErrorLine()`：优先从 stderr 里挑 `Error:` / `Failed` / `curl:` 等关键行，
+绝不把 `==>` 过程行当原因展示。挑不出时返回空串，由调用方拼「退出码 N」。
+
+### 修复：AweSun / UURemote 永远装不上（pkg 安装器需要 sudo）
+
+真实原因（实测复现）：
+
+```
+sudo: a terminal is required to read the password
+sudo: a password is required
+```
+
+这两个 cask 用 `.pkg` 安装器，`brew` 会调 `/usr/bin/sudo installer -pkg`，而后台进程
+**没有终端**，sudo 读不到密码，必然失败。以前它跑到一半才报错，错误还被过程行盖住。
+
+现在：扫描阶段就识别 `needsSudo`（`artifacts` 里出现 `pkg`/`pkgutil`/`installer`），
+这类应用**不算可一键更新**，界面显示「需手动」并给出可直接复制的终端命令；
+引擎执行时也提前跳过并说明原因，不再让 sudo 抛一堆栈。
+
+### 修复：`planById` 作用域错误
+
+复核逻辑引用了 `planById`，但它是 `runUpdates` 里 Windows 分支的局部变量，
+在 `runMacosUpdates` 作用域不可见 —— 一旦走到复核就会抛 `planById is not defined`，
+把已经成功的更新写成失败。现在在 `runMacosUpdates` 内部自行构建。
+
+### 测试
+
+`unit 306/306`（新增 9 条）、`render 85/85`、`deny 12/12`。
+真实扫描：8 个可一键更新、2 个需手动（AweSun / UURemote，均因 pkg + sudo）。
+
+## [1.3.11] — 2026-11-03
+
+### 修复：点「全部更新」后 13 个应用全部失败（判据写错）
+
+`runMacosUpdates` 里构建 `forceInstall` 表时用了：
+
+```js
+if (it.adoptToken && it.latestNewer)   // ← 错
+```
+
+`latestNewer` 表示「应用自带更新源（appcast）查到的版本更新」，而能靠 cask 接管的
+应用根本不会去查 appcast（`managed=false` 但 cask 命中时走的是 cask 目录这条线），
+所以该字段恒为 `false`。后果：界面显示「13 个可更新」，点下去 13 个全报
+「cask 目录里没有它」——**勾得动、必然失败**，比不显示更糟。
+判据改为只看 `adoptToken`（它由 `canAdopt` 决定：cask 存在且版本更新）。
+
+### 修复：更新结束后界面立刻变「扫描中」，看不到结果
+
+`startUpdate` 的 `finally` 里无条件立即 `startScan(true)`，界面在更新收尾的同一瞬间
+切到「扫描中…」。用户只看到「点了全部更新，结果它在扫描」，完全不知道
+13 个应用成没成。现在：收尾先写一条带成功/失败条数的日志，延迟 4 秒再重扫。
+
+### 新增：更新结果面板
+
+以前 `update.results` **根本没有被渲染**。现在更新结束后直接显示
+「上次更新：成功 N / M（X 个失败）」，并逐条列出失败的应用名与原因。
+
+### 新增：更新后的**磁盘**版本复核
+
+以前只看 `brew list --cask --versions`，那是 Homebrew **记录的**版本，不是磁盘事实。
+`brew install --cask --force` 的流程是「下载 → 移除旧 app → 搬入新 app」，中途被打断时
+brew 可能已记成新版本，而 `/Applications` 里还是旧的。现在再用 cask 声明的 `.app` 名
+读 `CFBundleShortVersionString` 做第二重证据，两者对不上就**报失败**。
+
+版本串归一（真实样本，本机实测）：cask 的 version 常是「版本,构建号,哈希」多段写法，
+磁盘上只有主版本。例如 QQ 记录 `7.0.0_260812_01,9.9.33,126b7ce6`、磁盘 `7.0.0`；
+腾讯柠檬 `5.3.8,6D1470FEA8573BFF3E422BDE1DEF14CD`。比较前先取逗号前那段、
+再砍掉下划线/加号之后的部分，否则会把成功误报成失败（实测踩到）。
+
+### 测试
+
+`unit 297/297`（新增 15 条）、`render 85/85`（新增 8 条）、`deny 12/12`。
+真实端到端：QQ 升级成功并被 brew 接管（记录 `7.0.0_260812_01,...`、磁盘 `7.0.0`，
+归一后判为一致）；balenaEtcher 因 GitHub Releases 在本机不可达而卡死超时，
+被如实报为失败（未被误判成功）。
+
+## [1.3.10] — 2026-11-03
+
+### 变更：能对上 cask 的非 Homebrew 应用改为**可一键更新**
+
+1.3.9 把「官网有新版」如实显示出来了，但把它做成了**只能看、点不动**的「需手动」。
+用户的反问是对的：明明 `brew` 一条命令就能做完的事，为什么要让人自己开终端？
+
+只要满足**两个条件**——cask 目录里有这个应用、且 cask 版本比已装的新——就执行：
+
+```bash
+brew install --cask --force <token>
+```
+
+引擎新增 `adoptToken` / `canAdopt` 字段：`hasUpdate` 与 `updateSupported` 同时为真，
+勾选框可用，`available` 就是 cask 的目标版本。装完后应用自动转为 Homebrew 管理，
+之后走常规 `brew upgrade --cask`。
+
+### 修正：1.3.9 给出的 `--adopt` 命令是**错的**
+
+`--adopt` 只接受「已有 app 与待安装版本**完全一致**」的情形 —— `cask/artifact/moved.rb`
+会比对 `CFBundleShortVersionString`，不一致直接抛
+`It seems the existing App is different from the one being installed.`。
+它只能「认领一个已经是最新的 app」，**根本不能用于升级**。
+
+实测确认（本机）：IINA 1.4.4 用 `--adopt` 失败，用 `--force` 成功升到 1.5.0 并被接管。
+1.3.8 / 1.3.9 的文档与界面提示都教用户跑 `--adopt`，属于把无效命令写进产品，本版全部改为 `--force`。
+
+### 修复：`plan` 没有传进 `runMacosUpdates`
+
+端到端实测抓到的真 bug：界面把非 Homebrew 应用勾上了，后台却一律报
+「无对应 cask」——因为 `runUpdates` 调用 `runMacosUpdates` 时漏传了 `plan`，
+拿不到 `adoptToken`。这就是典型的「勾得动、点下去必然失败」，比不显示更糟。
+已修复并加防回归断言（`runUpdates` 必须把 `plan` 传下去）。
+
+### 实测
+
+- `unit 282/282`、`render 77/77`、`deny 12/12`。
+- 真实扫描：117 个应用，**14 个可一键更新**（此前为 0），`manual` 降为 0。
+- 真实更新：哔哩哔哩 1.18.0 → 1.20.0，`brew install --cask --force bilibili` 耗时 44 秒，
+  后台复核读到 `verified: "1.20.0"`，应用随即出现在 `brew list --cask`。
+- 已知边界：对不上 cask 的 15 个应用（Quark、ToDesk、爱奇艺等）仍无法更新——
+  Homebrew 里根本没有它们，插件不会去猜一个不存在的包名。
+
+## [1.3.9] — 2026-11-03
+
+### 新增：非 Homebrew 应用也能查到「官网有没有新版」
+
+1.3.8 把「不可判断」如实显示出来是对的，但它也暴露了一个更根本的缺口：
+**`available` 只在 `managed === true` 时才赋值**。本机 `brew list --cask` 是空的
+（110 个应用全是拖 DMG / 手动安装），于是整屏都是「不可判断」、「可升级到」恒为 `—`，
+而 cask 目录里其实已经知道 16 个应用有更新 —— 信息在那，却没送到用户眼前。
+
+新增 `lib/appcast.js`，读应用**自带的**更新源，只读地判断官网最新版本：
+
+- **Sparkle**：`Info.plist` 的 `SUFeedURL` → appcast.xml，取 `sparkle:shortVersionString`
+  （`sparkle:version` 是构建号，180 这种数字拿来比较必然出错）；带 `<sparkle:channel>`
+  的灰度 item 在存在正式 item 时不采用。
+- **Electron**：`Contents/Resources/app-update.yml` 的 `url` + `channel` →
+  `<channel>-mac.yml` / `latest-mac.yml` 的顶层 `version:`。只认 `generic` provider；
+  `url: ''`（本机 NuPhyIO / QQ / aDrive 的真实情况）与 `provider: github` 一律不猜。
+- 两者都失败 → 该应用保持「不可判断」。**绝不猜版本号**。
+
+`buildMacosItems` 新增 `official` 入参，产出 `latestVersion` / `latestNewer` / `latestVia`
+三个字段。它们与 `available` **刻意分开**：`available` 意味着「点一下就升到这个版本」，
+`latestVersion` 只是「官网有个更新的版本，你得自己动手」。`hasUpdate` / `updateSupported`
+仍然只由 Homebrew 决定 —— 查到有新版 ≠ 本插件能一键更新，这条边界不能糊。
+
+界面：状态列新增橙色「**官网有新版**」，「可升级到」显示版本号 + `需手动` 标签，
+状态栏补「另有 N 个官网有新版需手动升级」，筛选栏新增「**需手动**」分段，
+悬停提示写明版本来源与 `brew install --cask --adopt <token>`。排序把「官网有新版」提到可一键更新之后。
+
+新增设置 `checkOfficialSources`（macOS 专属，默认 `true`）。
+
+### 修复：系统组件被谎报成「已是最新」
+
+`UNDETERMINED_REASONS` 里没有 `system-component` / `store-managed`，这两类落到兜底分支
+渲染成绿色「已是最新」。可本插件从来没有比较过它们的版本 —— macOS 由系统更新负责、
+App Store 应用由 App Store 负责。本机 65 行全中，是被 1.3.8 修过的同一类谎报在另一个分支上漏网。
+现在显示中性的「系统负责」，悬停说明由谁负责。**「没比较过」不许伪装成「已经最新」。**
+
+### 修复：中文应用名错配 cask
+
+`normalizeAppKey` 只保留 `[a-z0-9]`，「爱奇艺」「企业微信」归一化后都是空串。
+旧实现拿空串继续逐 token 比对，`normalizeAppKey(entry.token) === ""` 对第一个
+「声明了纯符号 `.app`」的 cask 恒等命中 —— 实测把**爱奇艺**错配成 `alipay-key-tool`
+（支付宝开放平台密钥工具），连界面上给出的 `--adopt` 命令都是错的。
+现在空 key 直接放弃逐 token 比对，返回 null；匹配逻辑抽成 `createCaskMatcher`，
+扫描侧与组装侧共用同一套规则，避免「扫描时认为是非 Homebrew 去查了官网、
+组装时又匹配成 Homebrew 管理」的自相矛盾。
+
+### 新增：`skipBootstrap` 之外的第 118 个应用
+
+扫描范围仍是标准目录，新增的 `.app` 会随枚举自动进入列表。
+
+### 测试
+
+`unit 270/270`（新增 54 条）、`render 72/72`（新增 15 条）、`deny 12/12`，全部通过。
+端到端实测（110→117 个应用，真实网络）：IINA 1.4.4→1.5.0（Sparkle）、
+哔哩哔哩 1.18.0→1.20.0（Electron）被正确识别；其余 43 个非 Homebrew 应用如实保持
+「不可判断」。官网查询本身耗时约 1.3 秒（52 个目标，并发 7），可随时用开关关闭。
+
 ## [1.3.8] — 2026-11-03
 
 收口《README-for-author》与《DIAGNOSIS.zh-CN》里**两条尚未落地的建议**。
