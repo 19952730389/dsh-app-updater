@@ -423,6 +423,53 @@ ok(String(cols[1].props.style.width) === "260px", "应用列默认 260px", cols[
 ok(byClass(tree, "appupd-banner").length === 0, "演练模式关闭时无警示条");
 ok(byClass(tree, "appupd-nameline").length === 2 || byClass(tree, "appupd-name").length === 2, "应用行渲染正常");
 
+group("1.3.8 非 Homebrew 应用：行提示带 --adopt 命令");
+statePayload = baseState({
+  platform: "darwin",
+  apps: {
+    scannedAt: Date.now(),
+    stats: { total: 2, upgradable: 0, unsupported: 2 },
+    items: [
+      {
+        id: "macapp:com.colliderli.iina",
+        name: "IINA",
+        version: "1.4.4",
+        available: "",
+        publisher: "Homebrew cask · iina",
+        source: "app",
+        hasUpdate: false,
+        updateSupported: false,
+        reason: "not-managed",
+        adoptHint: "brew install --cask --adopt iina",
+      },
+      {
+        id: "macapp:com.raycast.macos",
+        name: "Raycast",
+        version: "1.99.0",
+        available: "",
+        publisher: "com.raycast.macos",
+        source: "app",
+        hasUpdate: false,
+        updateSupported: false,
+        reason: "not-managed",
+      },
+    ],
+  },
+});
+rt.reset();
+await tick();
+tree = rt.render();
+await tick();
+tree = rt.render();
+{
+  const reasons = byClass(tree, "appupd-reason").map((n) => textOf(n));
+  const iina = reasons.find((t) => t.includes("IINA") || t.includes("iina"));
+  ok(reasons.some((t) => t.includes("brew install --cask --adopt iina")), "带 adoptHint 的行显示具体收编命令", reasons);
+  ok(reasons.some((t) => t === "非 Homebrew 管理"), "没有 adoptHint 时只显示原因，不拼空提示", reasons);
+  ok(!reasons.some((t) => t.includes("：") && t.trim().endsWith("：")), "不会渲染出空提示的悬空冒号", reasons);
+  void iina;
+}
+
 group("演练模式警示条");
 statePayload = baseState({ settings: Object.assign({}, baseState().settings, { dryRun: true }) });
 rt.reset();

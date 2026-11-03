@@ -2,6 +2,35 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.8] — 2026-11-03
+
+收口《README-for-author》与《DIAGNOSIS.zh-CN》里**两条尚未落地的建议**。
+四个补丁（brew 失败被伪装成 0 个应用、cask 目录竞速、扫描警告上界面、findBrew 断言）
+在 1.3.3–1.3.5 已经并入，本版**不再重复修**，只处理剩下的两条。
+
+### 新增
+
+- **「非 Homebrew 管理」直接给可执行的下一步**（`lib/macos.js` + `lib/client.js`）。
+  这是 Mac 上最常见的状态（绝大多数应用是拖 DMG 装的），以前只回一句「非 Homebrew 管理」，
+  用户知道「不能更新」却不知道「那要怎么办」。现在引擎为这类应用附带 `adoptHint`：
+  - 能对上 cask → `brew install --cask --adopt <真实 token>`（接管现有 `.app`，不重装、不丢配置）；
+  - 对不上 cask → 给 `brew install --cask --adopt <token>` 占位写法，仍然指明方向；
+  - 系统组件 / App Store 应用 / 已由 Homebrew 管理的应用**不**给这条提示（避免误导）。
+  界面把提示拼在原因后面显示（`原因：命令`），没有提示时只显示原因，不留悬空冒号。
+
+- **平台专属设置不再跨平台落盘**（`lib/state.js`）。界面本来就按平台裁剪开关，但
+  `/settings` 接口和 `state.json` 不看平台 —— macOS 上照样能把 `autoElevate`、
+  `hashFallbackUpgrade`、`includeRegistryOnly` 这些 Windows 概念写进去，然后永久存着一批
+  用不到的键，还会被序列化回前端让「设置」看起来像跨平台通用项。
+  新增 `settingAppliesTo(key, family)` 作为唯一判定源：
+  - `updateSettings` 丢弃不属于本平台的键（静默，不算错误）；
+  - `load()` 合并默认值后再裁一次（否则 `defaultSettings()` 的全集又会把它们带回来）；
+  - 新增 `Store.pruneForeignSettings()`，可主动清掉上个平台遗留的键。
+
+### 测试
+
+`unit 197/197`（新增 13 条）、`render 54/54`（新增 3 条）、`deny 12/12`，全部通过。
+
 ## [1.3.7] — 2026-11-02
 
 **改名回退**：GitHub 仓库 `19952730389/dsh-appupdater` → **改回 `19952730389/dsh-app-updater`**。

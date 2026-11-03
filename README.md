@@ -98,6 +98,9 @@ brew install --cask --adopt iina            # 例：本机 1.4.4，cask 已到 1
 brew install --cask --adopt google-chrome
 ```
 
+1.3.8 起，界面上这类应用的行提示**会直接把对应命令写出来**（能对上 cask 时给真实 token，
+例如 `非 Homebrew 管理：brew install --cask --adopt iina`），不用再回来看文档。
+
 如果状态行下方出现**红色警告横幅**，说明这次扫描的**判断依据本身失效**了（Homebrew 命令失败，
 或 cask 目录抓不下来），此时「0 个可更新」不代表应用都是最新 —— 横幅里有具体原因与下一步。
 

@@ -29,6 +29,7 @@ import {
   buildMacosItems,
 } from "../lib/macos.js";
 import { admissionGate, hasConnectionCredentials, resolveLegacyLoopbackOptIn, isCrossSiteBrowserRequest, LEGACY_LOOPBACK_ENV } from "../lib/index.js";
+import { settingAppliesTo } from "../lib/state.js";
 import {
   detectEnvironment,
   describeEnvironment,
@@ -676,6 +677,75 @@ ok(resolveLegacyLoopbackOptIn(undefined, { [LEGACY_LOOPBACK_ENV]: "off" }) === f
   // 只看真实代码行（注释里会引用旧写法）：`if (upRes.ok || upRes.stdout)` 必须已消失
   const codeOnly = winScan.split("\n").filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*")).join("\n");
   ok(!/upRes\.ok \|\| upRes\.stdout/.test(codeOnly), "半截 stdout 不再被当真值（upRes.ok || upRes.stdout 已移除）");
+}
+
+/* ---------------- 1.3.8：非 Homebrew 应用的「下一步」提示 ---------------- */
+group("1.3.8 非 Homebrew 应用：给出可执行的收编命令");
+{
+  // 能对上 cask 的非 Homebrew 应用 → 提示里给真 token（--adopt 接管现有 .app，不重装）
+  const withCask = buildMacosItems({
+    apps: [
+      { path: "/Applications/IINA.app", bundleName: "IINA.app", name: "IINA", version: "1.4.4", bundleId: "com.colliderli.iina", appStore: false, system: false },
+    ],
+    brews: new Map(), // 没装 → 非 Homebrew 管理
+    outdated: new Map(),
+    catalog: parseCaskCatalog([{ token: "iina", version: "1.5.0", name: ["IINA"], artifacts: [{ app: ["IINA.app"] }] }]),
+    settings: {},
+  });
+  const iina = withCask.items.find((i) => i.name === "IINA");
+  ok(iina && iina.reason === "not-managed", "非 Homebrew 应用标注 not-managed", iina && iina.reason);
+  ok(iina && iina.adoptHint === "brew install --cask --adopt iina", "能对上 cask 时给具体 token 的 --adopt 命令", iina && iina.adoptHint);
+
+  // 对不上 cask 的应用 → 给占位写法，仍然告诉用户下一步是什么
+  const noCask = buildMacosItems({
+    apps: [
+      { path: "/Applications/Mystery.app", bundleName: "Mystery.app", name: "Mystery", version: "9.9", bundleId: "com.example.mystery", appStore: false, system: false },
+    ],
+    brews: new Map(),
+    outdated: new Map(),
+    catalog: parseCaskCatalog([{ token: "other", version: "1.0", name: ["Other"], artifacts: [{ app: ["Other.app"] }] }]),
+    settings: {},
+  });
+  const mystery = noCask.items.find((i) => i.name === "Mystery");
+  ok(mystery && typeof mystery.adoptHint === "string" && mystery.adoptHint.includes("--adopt"), "对不上 cask 时仍给出 --adopt 提示", mystery && mystery.adoptHint);
+
+  // 系统组件 / App Store 应用不该被建议去 brew 收编
+  const sysAndStore = buildMacosItems({
+    apps: [
+      { path: "/System/Applications/Finder.app", bundleName: "Finder.app", name: "Finder", version: "1.0", bundleId: "com.apple.finder", appStore: false, system: true },
+      { path: "/Applications/Xcode.app", bundleName: "Xcode.app", name: "Xcode", version: "16.0", bundleId: "com.apple.dt.Xcode", appStore: true, system: false },
+    ],
+    brews: new Map(),
+    outdated: new Map(),
+    catalog: parseCaskCatalog([{ token: "xcode", version: "17.0", name: ["Xcode"], artifacts: [{ app: ["Xcode.app"] }] }]),
+    settings: {},
+  });
+  ok(sysAndStore.items.every((i) => !i.adoptHint), "系统组件与 App Store 应用不给 --adopt 提示", sysAndStore.items.map((i) => [i.name, i.adoptHint]));
+
+  // Homebrew 管理的应用不需要收编提示
+  const managedItem = buildMacosItems({
+    apps: [
+      { path: "/Applications/iTerm.app", bundleName: "iTerm.app", name: "iTerm2", version: "3.5.14", bundleId: "com.googlecode.iterm2", appStore: false, system: false },
+    ],
+    brews: new Map([["iterm2", "3.5.14"]]),
+    outdated: new Map(),
+    catalog: parseCaskCatalog([{ token: "iterm2", version: "3.5.14", name: ["iTerm2"], artifacts: [{ app: ["iTerm.app"] }] }]),
+    settings: {},
+  });
+  ok(managedItem.items.every((i) => !i.adoptHint), "Homebrew 管理的应用不带收编提示");
+}
+
+/* ---------------- 1.3.8：平台专属设置不跨平台落盘 ---------------- */
+group("1.3.8 平台专属设置");
+{
+  ok(settingAppliesTo("autoElevate", "windows") === true, "autoElevate 在 Windows 生效");
+  ok(settingAppliesTo("autoElevate", "macos") === false, "autoElevate 在 macOS 不生效");
+  ok(settingAppliesTo("includeRegistryOnly", "macos") === false, "includeRegistryOnly 在 macOS 不生效");
+  ok(settingAppliesTo("includeUnmanagedApps", "macos") === true, "includeUnmanagedApps 在 macOS 生效");
+  ok(settingAppliesTo("includeUnmanagedApps", "windows") === false, "includeUnmanagedApps 在 Windows 不生效");
+  ok(settingAppliesTo("keepInstallers", "macos") === true, "跨平台开关在 macOS 生效");
+  ok(settingAppliesTo("keepInstallers", "windows") === true, "跨平台开关在 Windows 生效");
+  ok(settingAppliesTo("downloadDir", "other") === true, "未知平台不影响通用开关");
 }
 
 /* ---------------- 结果 ---------------- */
