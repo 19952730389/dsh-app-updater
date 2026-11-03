@@ -470,6 +470,18 @@ tree = rt.render();
   void iina;
 }
 
+group("1.3.8 回归：无法判断的行不再谎报「已是最新」");
+{
+  // 非 Homebrew 管理 / 目录未收录 / 版本未知 → 我们并不知道是不是最新，
+  // 以前一律渲染「已是最新」，把「无法判断」谎报成「已经最新」。
+  const states = byClass(tree, "appupd-state-unknown").map((n) => textOf(n));
+  const latest = byClass(tree, "appupd-state-ok").map((n) => textOf(n));
+  ok(states.filter((t) => t === "不可判断").length === 2, "两条 not-managed 行显示「不可判断」", states);
+  ok(!latest.includes("已是最新"), "没有任何行被错误标成「已是最新」", latest);
+  const unknown = byClass(tree, "appupd-state-unknown")[0];
+  ok(unknown && String(unknown.props.title || "").includes("无法判断"), "悬停提示说明「无法判断是否有新版本」", unknown && unknown.props.title);
+}
+
 group("演练模式警示条");
 statePayload = baseState({ settings: Object.assign({}, baseState().settings, { dryRun: true }) });
 rt.reset();

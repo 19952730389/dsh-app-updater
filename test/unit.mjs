@@ -29,7 +29,7 @@ import {
   buildMacosItems,
 } from "../lib/macos.js";
 import { admissionGate, hasConnectionCredentials, resolveLegacyLoopbackOptIn, isCrossSiteBrowserRequest, LEGACY_LOOPBACK_ENV } from "../lib/index.js";
-import { settingAppliesTo } from "../lib/state.js";
+import { settingAppliesTo, Store, defaultSettings } from "../lib/state.js";
 import {
   detectEnvironment,
   describeEnvironment,
@@ -746,6 +746,88 @@ group("1.3.8 平台专属设置");
   ok(settingAppliesTo("keepInstallers", "macos") === true, "跨平台开关在 macOS 生效");
   ok(settingAppliesTo("keepInstallers", "windows") === true, "跨平台开关在 Windows 生效");
   ok(settingAppliesTo("downloadDir", "other") === true, "未知平台不影响通用开关");
+}
+
+/* ---------------- 1.3.8 对抗审计回归（审计员发现，全部已实测复现） ---------------- */
+group("1.3.8 回归：平台归属只认真实平台（防陈旧 env 误删本平台键）");
+{
+  // 本机 win32，但 state.json 里 env 是另一台机器留下的 macos（同步/漫游/换机）
+  const s = new Store();
+  s.loaded = true;
+  s.save = () => {};
+  s.state = { ...s.state, env: { family: "macos", platform: "darwin" }, settings: { ...defaultSettings() } };
+  const fam = s.platformFamily();
+  const realFamily = platformFamily(process.platform);
+  ok(fam === realFamily, "platformFamily() 用真实平台而非陈旧 env", { fam, realFamily });
+  s.pruneForeignSettings();
+  if (realFamily === "windows") {
+    ok(s.state.settings.includeRegistryOnly === true, "Windows 上 includeRegistryOnly 不被误删", s.state.settings.includeRegistryOnly);
+    ok(s.state.settings.autoElevate === true, "Windows 上 autoElevate 不被误删");
+  } else {
+    ok(s.state.settings.includeUnmanagedApps === true, "macOS 上 includeUnmanagedApps 不被误删");
+  }
+}
+
+group("1.3.8 回归：includeRegistryOnly 用 !== false 判断（缺字段=开启）");
+{
+  // 真值判断会让「键不存在」被当成「用户关掉」，静默丢掉整个注册表源
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  const code = src.split("\n").filter((l) => !l.trimStart().startsWith("//") && !l.trimStart().startsWith("*")).join("\n");
+  ok(!/if \(settings\.includeRegistryOnly\)/.test(code), "不再有真值判断 if (settings.includeRegistryOnly)");
+  ok(!/!settings\.includeRegistryOnly &&/.test(code), "过滤处不再用 !settings.includeRegistryOnly");
+  ok(/settings\.includeRegistryOnly !== false/.test(code), "改成了 !== false");
+  ok(/settings\.includeRegistryOnly === false && app\.source === "registry"/.test(code), "过滤处改成 === false");
+}
+
+group("1.3.8 回归：useSelfUpdater 可被持久化（此前读得到但设不了）");
+{
+  const s = new Store();
+  s.loaded = true;
+  s.save = () => {};
+  ok(s.state.settings.useSelfUpdater === true, "默认声明在 defaultSettings 里", s.state.settings.useSelfUpdater);
+  const next = s.updateSettings({ useSelfUpdater: false });
+  ok(next.useSelfUpdater === false, "updateSettings 能关掉自带更新器（逃生开关可用）", next.useSelfUpdater);
+}
+
+group("1.3.8 回归：多 .app 的 cask 不产生重复 id");
+{
+  const catalog = parseCaskCatalog([
+    { token: "microsoft-office", version: "16.99", name: ["Microsoft Office"], artifacts: [{ app: ["Word.app", "Excel.app", "PowerPoint.app", "Outlook.app"] }] },
+  ]);
+  const apps = ["Word", "Excel", "PowerPoint", "Outlook"].map((n) => ({
+    path: `/Applications/${n}.app`,
+    bundleName: `${n}.app`,
+    name: n,
+    version: "16.0",
+    bundleId: `com.ms.${n}`,
+    appStore: false,
+    system: false,
+  }));
+  const r = buildMacosItems({ apps, brews: new Map([["microsoft-office", "16.0"]]), outdated: new Map(), catalog, settings: {} });
+  const ids = r.items.map((i) => i.id);
+  ok(r.items.length === 4, "4 个 .app 都列出", r.items.length);
+  ok(new Set(ids).size === ids.length, "id 唯一（前端 selected/key 不会串）", ids);
+  ok(ids.filter((i) => i.startsWith("brew:microsoft-office")).length === 4, "仍都是同一个 cask 的条目", ids);
+}
+
+group("1.3.8 回归：哈希配对不再被 win32 别名抢先");
+{
+  const mk = () => ({ sha256ByArch: { x86: "aaaa".repeat(16), x64: "bbbb".repeat(16) } });
+  // Electron 系文件名：平台 win32 + 架构 x64，x86 的 win32 别名不能抢先
+  ok(pickInstallerSha256(mk(), "", "App-win32-x64.exe")?.startsWith("bbbb"), "App-win32-x64.exe 选中 x64 哈希");
+  ok(pickInstallerSha256(mk(), "arm64", "App-win32-x64.exe")?.startsWith("bbbb"), "arch 不匹配时仍靠文件名选对 x64");
+  ok(pickInstallerSha256(mk(), "", "App-32bit.exe")?.startsWith("aaaa"), "真 32 位包仍选中 x86 哈希");
+  ok(pickInstallerSha256(mk(), "", "App-win32.exe")?.startsWith("aaaa"), "纯 win32（无架构标记）兜底到 x86");
+  ok(pickInstallerSha256(mk(), "", "App-arm64.exe") === null, "没有 arm64 哈希时拒绝猜（fail-closed）");
+  ok(pickInstallerSha256({ sha256ByArch: { x64: "cccc".repeat(16) } }, "", "x.exe")?.startsWith("cccc"), "单哈希清单直接用");
+}
+
+group("1.3.8 回归：macOS 扫描响应取消");
+{
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  const macScan = src.slice(src.indexOf("async function scanMacos"), src.indexOf("async function runMacosUpdates"));
+  ok((macScan.match(/throwIfAborted\(\)/g) || []).length >= 3, "枚举后 / 目录前 / 目录后都有取消检查", (macScan.match(/throwIfAborted\(\)/g) || []).length);
+  ok(/throw new Error\("扫描已取消"\)/.test(macScan), "取消向上抛，不当故障");
 }
 
 /* ---------------- 结果 ---------------- */

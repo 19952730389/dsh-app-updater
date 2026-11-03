@@ -27,9 +27,58 @@
   - `load()` 合并默认值后再裁一次（否则 `defaultSettings()` 的全集又会把它们带回来）；
   - 新增 `Store.pruneForeignSettings()`，可主动清掉上个平台遗留的键。
 
+### 修复（独立对抗审计发现，全部先复现再修）
+
+本版在发版前做了一轮独立只读审计，挖出 6 个真实缺陷 —— 其中 1 个是本版新增功能
+自己引入的回归，另有 1 个从 1.3.x 起就存在。全部用可执行脚本复现过，修完各配回归测试。
+
+- **平台归属被「陈旧的 env」带偏，Windows 上会静默丢掉注册表源**（`lib/state.js`）。
+  这是**本版新增裁剪逻辑自己引入的回归**，也是整轮审计里后果最重的一条：
+  `platformFamily()` 原先优先读 `state.json` 里存的上次扫描环境，而不是本机平台。
+  只要那份 state 来自另一台机器（同步 `~/.dsh`、漫游配置、恢复备份、换机沿用），
+  在 Windows 上读到陈旧的 `family: "macos"` 就会把 `includeRegistryOnly` 当成外来键删掉；
+  而 engine 对它是**真值判断**，`undefined` = `false`、默认却是 `true` ——
+  于是注册表兜底被静默跳过、registry 条目全被过滤，**界面少显示应用且没有任何警告**
+  （正是 1.3.3 修过的那一类静默漏报）。修法两层：
+  - `platformFamily()` 改为**只认真实 `process.platform`**，env 仅在真实平台无法判断时兜底；
+  - engine 的两处判断改成 `!== false` / `=== false`，与 969/1085 行一致 ——
+    「键不存在」永远等于「按默认开启」，不会被误读成「用户关掉了」。
+
+- **「无法判断」被谎报成「已是最新」**（`lib/client.js` 状态列）。非 Homebrew 管理、
+  目录未收录、版本读不出来的应用，`hasUpdate` 恒为 `false`，状态列就渲染「已是最新」——
+  即使 cask 目录里明明有更新（实测 Raycast 已装 1.99.0、目录 2.10.1）。
+  现在这类行显示琥珀色「**不可判断**」并给出悬停原因，不再把「没比较过」说成「已经最新」。
+
+- **`useSelfUpdater` 读得到却设不了**（`lib/state.js`）。`engine.js:1013` 读
+  `settings.useSelfUpdater !== false`，但它从来没在 `defaultSettings()` 里声明，
+  而 `updateSettings` 只接受已声明的键 —— 结果这个「关闭自带更新器」的逃生开关
+  对用户完全不可达，只能改代码。现已补进默认设置。
+
+- **多 `.app` 的 cask 产生重复 item id**（`lib/macos.js`）。一个 cask 声明多个 `.app`
+  是真实存在的（`microsoft-office` 声明 Word/Excel/PowerPoint/Outlook，`box-tools`、
+  `boxy-suite` 同理），旧实现给每个 `.app` 都发 `brew:<token>`，于是 4 条 item 同 id →
+  前端 `selected[id]` 勾一个全勾、`stats` 重复计数。现在首个沿用 `brew:<token>`，
+  后续加 bundle 后缀去重。
+
+- **哈希配对被 `win32` 别名抢先 → 假失败**（`lib/engine.js` `pickInstallerSha256`）。
+  `win32` 是**平台**名不是架构标记，Electron 系文件名把两者拼在一起
+  （`App-win32-x64.exe` = 平台 win32 + 架构 x64）。旧实现按对象键顺序先试 x86，
+  `win32` 抢先命中 → 拿 x86 的哈希去校验 x64 的包 → 误报「哈希与清单声明不一致」→
+  拒绝安装并白跑一次 winget 兜底。现在强别名（`x64`/`64-bit`/`arm64`…）先全试一遍，
+  弱别名（只有 `win32`）仅在无更强线索时兜底；配对不出时照旧 fail-closed 跳过校验。
+
+- **macOS 扫描不响应取消**（`lib/engine.js` `scanMacos`）。最慢的两步
+  （枚举 `.app`、cask 目录竞速，单地址 60s）都不收 signal，也没有任何
+  `signal.aborted` 抛出 —— 点取消要等它们跑完才响应，界面像卡死。
+  Windows 侧 347/380/418 一直有这道检查，macOS 侧漏了。现已补上（枚举后、
+  抓目录前、抓目录后各一次），与 Windows 一致：取消向上抛，不算故障、不写红横幅。
+
 ### 测试
 
-`unit 197/197`（新增 13 条）、`render 54/54`（新增 3 条）、`deny 12/12`，全部通过。
+`unit 217/217`（新增 33 条）、`render 57/57`（新增 6 条）、`deny 12/12`，全部通过。
+审计同时确认**没有**问题的模块：`proc` / `elevate` / `registry` / `winget` / `version` /
+`platform`，以及 engine 的更新主流程与安装后复核、index 的准入与 CSRF 围栏、
+state 的原子写与并发 `save()`、macos 的竞速与过期缓存兜底。
 
 ## [1.3.7] — 2026-11-02
 
