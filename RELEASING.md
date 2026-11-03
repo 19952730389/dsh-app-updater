@@ -2,6 +2,41 @@
 
 这个仓库同时是 **GitHub 插件源码** 和 **npm 包 `dsh-app-updater`**，两者版本必须一致。
 
+## 0. 两台机器同时维护：先同步，再动手
+
+这个仓库在两台 Mac 上维护（家里 / 本机）。**最容易出的事故是两边各自提交、历史分叉**，
+尤其可怕的是「npm 先发了、GitHub 没推」——registry 里的 `gitHead` 指向一个
+GitHub 上并不存在的提交，别人从 npm 追溯源码时找不到对应代码（实测踩过：
+发布 1.3.14 时 `gitHead: bf1a34d` 在 GitHub API 返回 422）。
+
+**每次开工前先 pull，收工前必推**：
+
+```bash
+# ① 开工：先对齐远端，别在分叉的历史上改
+git pull --rebase origin main
+
+# ② 干活、提交
+git add -A && git commit -m "feat: ..."
+
+# ③ 收工：推送，确认远端已有你的提交
+git push origin main
+git log --oneline -1 origin/main   # 必须能看到刚才那个提交
+```
+
+**发版顺序永远是：GitHub 推送 → 再 npm publish。** 反过来就会留下
+「npm 有版本、GitHub 没有对应提交」的不一致。发版前用这条命令自检：
+
+```bash
+# 发布前最后一道检查：本地 HEAD 必须已在远端
+git fetch origin
+test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" && echo "OK：可以发布" || echo "先推送！"
+```
+
+> 若两台机器改到同一处代码，`git pull --rebase` 会要求你解决冲突。
+> 冲突时**不要**用 `git push --force` 覆盖另一台的提交 —— 那是别人已经发布过的工作。
+
+---
+
 ## 1. 改版本号与更新日志
 
 ```bash
@@ -44,6 +79,36 @@ gh release create v<version> dsh-app-updater.tgz \
 `releases/latest/download/dsh-app-updater.tgz`，`latest/download/` 只解析 `latest`，
 文件名是按字面取的——一旦资产名带版本号，下一次发版这个链接就会 404。
 如果确实想让文件名带版本号，就把链接改成钉住 tag 的形式（`releases/download/v1.0.0/…`）。
+
+## 4.5 发版检查清单（照着勾）
+
+```bash
+# ① 同步与推送
+git pull --rebase origin main
+git fetch origin && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" \
+  && echo "✓ HEAD 已在远端" || echo "✗ 先 git push"
+
+# ② 三套测试必须全绿
+node test/unit.mjs && node test/render.mjs && node test/deny.mjs
+
+# ③ 版本一致：package.json / CHANGELOG 顶部 / 即将打的 tag
+grep '"version"' package.json
+head -5 CHANGELOG.md | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+'
+
+# ④ 发布 npm
+npm publish --access public
+
+# ⑤ 发布后核对 gitHead 指向的提交真实存在于 GitHub
+curl -s https://registry.npmjs.org/dsh-app-updater/<version> \
+  | python3 -c "import json,sys;d=json.load(sys.stdin);print('gitHead:',d['gitHead'])"
+# 拿上面打印的 sha 去 GitHub 查，必须 200（422/404 说明没推）
+```
+
+> **别只看 npm view 就以为没发出去**：国内默认 registry 常是
+> `registry.npmmirror.com`，镜像有缓存延迟，刚发布时它仍显示旧版本。
+> 核对用官方源：`npm view dsh-app-updater version --registry=https://registry.npmjs.org`。
+
+---
 
 ## 5. 市场收录怎么更新
 
