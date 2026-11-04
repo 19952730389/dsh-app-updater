@@ -2,6 +2,71 @@
 
 本项目遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.3.15] — 2026-11-04
+
+### 安全：写操作默认拒绝再加固（`csrfToken` + `method`）
+
+- 宿主半身对 5 个写路由**显式校验 `method === "POST"`**（不匹配返回 `405`），不再依赖
+  宿主 `webServer.register` 的分发实现——原来「GET 带 body」也能触发扫描/更新/改设置。
+- 新增进程内 `csrfToken`（由 `GET /state.json` 下发、**不落盘**）：所有写操作在
+  `confirm:true` 之外必须原样带回，否则 `403`。兼容模式下无 Cookie 的跨站/脚本请求
+  拿不到它，无法再驱动「下载官网包 + UAC 提权静默安装」。
+- `admissionGate` 的 `500` 不再把宿主内部错误文案回给客户端；`readJsonBody` 改用
+  Buffer 累积（防中文跨 chunk 变 `U+FFFD`）、按字节计大小、超大请求体排空、只接受对象。
+- `/cancel` 支持 `target: "scan" | "update" | "all"`（默认 `all` 兼容旧行为），界面在
+  扫描中也能取消，不再「一按把扫描和更新一起停」。
+
+### 可靠性：下载并发化、结果可信度、生命周期
+
+- `winget download` 改为 **3 路并发预下载**，每次下载用独立私有 `workDir`，彻底消除
+  「共享下载目录前后 diff」的并发竞态；安装/兜底/复核仍严格串行（UAC 互斥）。
+- `moveIntoDownloadDir` 回迁处理 `EXDEV` 跨卷，并写 `.dsh-app-updater` **侧车标记**；
+  4 GiB 磁盘配额 `pruneDownloadDir` **只删带标记的本插件文件**，绝不误删用户放在同一
+  下载目录里的 `.exe` / `.dmg` / `.yaml`。
+- 安装后复核改为「首次立即 + 递增退避（`1.5^i`，cap 30s）+ 总时限」；网络抖动下载
+  最多重试 2 次（1s / 3s，仅超时/网络类错误）；`dryRun` 不再被 `keepInstallers=false` 删包。
+- `unverifiable`（读不到已装版本）新增明确字段与「已安装·未复核」状态；Windows 补
+  `manual` 统计；结果面板渲染 `installOk / verified / hash / durationMs / selfUpdater /
+  dryRun / unverifiable`。
+- cordis 卸载时 `abort()` 后台 scan / update 并清掉「更新后 4 秒自动重扫」timer；
+  `startUpdate` 补任务所有权校验（与 `startScan` 对齐）。
+- `state.json` 损坏时先备份为 `state.json.corrupt-*` 再回退；`save()` 失败记
+  `lastSaveError` 而非静默吞掉；`load()` / `openFolder` / `route dispose` 失败全部留痕。
+- 下发 `state.json` 前再裁一次平台专属设置（堵住运行期外部写入）。`/settings` 的
+  `downloadDir` 现在接受 macOS 以 `/` 开头的 POSIX 绝对路径。
+
+### 正确性：版本算法与子进程
+
+- `version.js`：`+build` 按 SemVer 视为元数据（与正式版相等）、尾缀大小写不敏感、
+  `normalizeVersionKey` 加分隔符消除 `1.2-3` vs `1.23` 碰撞、模块级 `/g` 正则改用
+  `matchAll`、`v` 前缀只剥「v 紧跟数字」。
+- `proc.js` / `registry.js`：`StringDecoder` 逐块解码（中文跨 chunk 不再变 `U+FFFD`）；
+  `proc.js` 在 POSIX 上 `detached` + 按进程组 kill（不留孤儿安装器）。
+- 扫描侧与复核侧版本归一统一到 `macos.js` 的 `mainVersionOf`，但 `splitCaskVersion`
+  保留原始串（不砍 `_` / `+`），避免破坏 1.3.13 的构建号识别。
+- macOS `reason` 细分 `not-in-catalog` / `unknown-version`（可一键更新集合逐位不变）；
+  cask 缓存带 `source` / `count` 与 `readCatalogCacheMeta`，stale 告警写明来源与缓存天数。
+
+### 界面与文档
+
+- 浏览器半身：`csrfToken` 统一注入、首帧不再闪 Windows 专属设置、结果字段补全、
+  `source` 徽章白名单、日志稳定排序、取消扫描、`doOpenDownloads` 回读 state。
+- `CONTRACT.md` / `README.md` / `README.en.md` / `RELEASING.md` 对齐代码：轮询
+  `900/5000ms`（原写 `800/4s`）、6 列 + 徽章、`/cancel` 的 `target` 与 1.3.5 杀树实现、
+  `csrfToken` / `saveError`、settings 全集、测试数改为「以 `npm test` 输出为准」、
+  发版脚本加资产名断言。
+
+### 修复引入的回归（本轮自查发现并修掉）
+
+- `splitCaskVersion` 一度误用 `mainVersionOf` 砍掉下划线构建段 → 恢复 + 加回归断言。
+- `pruneDownloadDir` 一度按扩展名清理（会误删用户文件）→ 改侧车标记 + 加断言锁住。
+
+### 测试
+
+`unit 363 / render 87 / deny 16`（本轮基线；发版前以 `npm test` 实际输出为准）。
+16 个 `lib/*.js` + `test/*.mjs` 全部 `node --check` 通过，`test/harness.mjs` 真实 HTTP
+端到端通过，6 项 HTTP 探针（CSRF / 405 / macOS 路径 / cancel target / 相对路径拒绝）全通过。
+
 ## [1.3.14] — 2026-11-03
 
 ### 新增：更新前探测下载源，不再陪跑两小时

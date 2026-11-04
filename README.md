@@ -262,11 +262,15 @@ dsh plugin --profile <profile> add link:/path/to/dsh-app-updater
 ## 测试
 
 ```bash
-node test/unit.mjs              # 153 项：定宽表格解析、版本比较、清单与静默参数、系统/架构识别、Homebrew 解析、macOS 应用枚举与 cask 匹配
-node test/render.mjs            # 51 项：设置面板（按平台）、演练提示、扫描警告横幅、列宽拖拽、请求体
-node test/deny.mjs              # 12 项：无 connection 服务时逐路由验证默认拒绝
-node test/harness.mjs --scan    # 用假 cordis ctx + 真 HTTP 把宿主半身跑起来
+npm test                        # = unit + render + deny，具体项数以命令输出为准
+node test/unit.mjs              # 定宽表格解析、版本比较、清单与静默参数、系统/架构识别、Homebrew 解析、macOS 应用枚举与 cask 匹配、准入闸门
+node test/render.mjs            # 设置面板（按平台）、演练提示、扫描警告横幅、列宽拖拽、请求体、结果面板
+node test/deny.mjs              # 无 connection 服务时逐路由验证默认拒绝 + CSRF / method 闸门
+node test/harness.mjs --scan    # 用假 cordis ctx + 真 HTTP 把宿主半身跑起来（非计分工具，需 Windows + winget 才能真扫描）
 ```
+
+> 文档里的历史项数（如 `153 / 51 / 12`、`36 / 32`）都是旧值，**一律以 `npm test` 的实际输出为准**。
+> `test/harness.mjs` 没有断言、不在 `npm test` 里、不计分，不要误当成第四套测试。
 
 > 测试不依赖本机是否装了 Homebrew：`findBrew` 的断言按「存在性」覆盖 Apple Silicon /
 > Intel / Linuxbrew 三处默认前缀（1.3.2 及以前这条断言写死 `=== null`，在真实 Mac 上恒红，
@@ -304,6 +308,24 @@ Edge 走它自带的更新服务：winget 目录里的 `Microsoft.Edge` 是企�
 > macOS 上只枚举标准应用目录。应用如果装在别处（例如 `~/Desktop` 或自定义目录），
 > 本插件看不到它 —— 这不是漏扫，是扫描范围之外。
 
+## 1.3.15 加固（相对 1.3.14 发布版）
+
+- **写操作双闸门**：宿主对写路由显式校验 `method === "POST"`，并在 `confirm:true` 之外
+  要求 `csrfToken`（由 `GET /state.json` 下发、不落盘）；兼容模式下无凭据的跨站 / 脚本请求
+  拿不到它，无法再驱动「下载 + 提权静默安装」。
+- **`/cancel` 可指定目标**：`target: "scan" | "update" | "all"`（默认 `all`），不再一按全停；
+  界面在扫描中也能取消。
+- **macOS 自定义下载目录**：`/settings` 的 `downloadDir` 现在接受以 `/` 开头的 POSIX 绝对路径。
+- **卸载清理**：cordis 卸载时 abort 后台 scan / update 任务并清掉自动重扫 timer，不再留幽灵任务。
+- **版本算法**：`+build` 按 SemVer 视为元数据、尾缀大小写不敏感、`normalizeVersionKey` 不再碰撞。
+- **子进程**：`StringDecoder` 逐块解码（中文跨 chunk 不再变 U+FFFD）、POSIX 按进程组取消。
+- **下载**：并发预下载（独立子目录消除目录 diff 竞态）、网络抖动重试、磁盘配额与清理、
+  `dryRun` 不再被删包；复核改为首立即 + 递增退避 + 总时限。
+- **界面**：结果面板补全 `installOk / verified / hash / durationMs / unverifiable` 等字段、
+  启用 `locale`（`zh-CN` / `en`）、键盘可调列宽等 a11y 改进。
+
+> 具体改动与验证结果见仓库工作区的 `dsh-app-updater-修复说明-*.md`（不随本包发布）。
+
 ## 卸载
 
 1. 从 profile 的 `package.json` 里删掉 `dsh.profile.bundles` 中的 `dsh-app-updater` 与 `dependencies` 中的对应条目。
@@ -314,17 +336,21 @@ Edge 走它自带的更新服务：winget 目录里的 `Microsoft.Edge` 是企�
 
 | 文件 | 作用 |
 |---|---|
-| `lib/index.js` | 宿主半身：HTTP 路由、写操作闸门、扫描/更新任务调度 |
-| `lib/engine.js` | 扫描合并、官网包下载、静默安装、winget 兜底、版本复核 |
+| `lib/index.js` | 宿主半身：HTTP 路由、准入 / `confirm` / `csrfToken` / method 闸门、扫描/更新任务调度 |
+| `lib/engine.js` | 扫描合并、官网包下载（并发预下载）、静默安装、winget 兜底、版本复核、下载源可达性探测 |
 | `lib/winget.js` | winget 定位与调用、定宽表格解析（CJK 宽度感知） |
 | `lib/registry.js` | 注册表 `Uninstall` 键枚举（PowerShell，UTF-8） |
-| `lib/version.js` | Windows 风格版本比较 |
-| `lib/state.js` | 状态与设置持久化（原子写） |
-| `lib/proc.js` | 子进程执行（超时/取消/UTF-8） |
-| `lib/client.js` | 浏览器半身：设置页 UI（设置面板、可拖拽列宽、进度与日志） |
+| `lib/version.js` | Windows 风格版本比较（含 SemVer `+build` / 尾缀自然序） |
+| `lib/state.js` | 状态与设置持久化（原子写）、CSRF token、跨平台设置裁剪 |
+| `lib/proc.js` | 子进程执行（超时 / AbortSignal / 进程组取消 / StringDecoder） |
+| `lib/macos.js` | macOS 数据层：`.app` 枚举、cask 目录竞速与缓存、列表组装 |
+| `lib/appcast.js` | 非 Homebrew 应用官网更新源（Sparkle / Electron，只读） |
+| `lib/elevate.js` | Windows UAC 提权（临时文件 IPC + 进程树取消） |
+| `lib/platform.js` | 系统 / 架构 / 引擎识别 |
+| `lib/client.js` | 浏览器半身：设置页 UI（设置面板、可拖拽列宽、进度、结果面板与日志；`zh-CN` / `en` 字典） |
 | `CONTRACT.md` | 宿主 ↔ 客户端接口契约 |
-| `test/unit.mjs` | 解析器 / 版本 / 清单单测（36 项） |
-| `test/render.mjs` | 前端渲染与交互自测（32 项） |
+| `test/unit.mjs` | 解析器 / 版本 / 清单 / 准入闸门单测（项数以 `npm test` 输出为准） |
+| `test/render.mjs` | 前端渲染与交互自测（项数以 `npm test` 输出为准） |
 | `test/harness.mjs` | 宿主路由端到端 harness（假 ctx + 真 HTTP） |
 | `icon.svg` | 插件图标 |
 | `LICENSE` `CHANGELOG.md` `README.en.md` | MIT 许可证、更新日志、英文说明 |

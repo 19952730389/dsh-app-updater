@@ -142,6 +142,24 @@ const badWrite = await (await fetch(legacyBase + "/dsh-app-updater/scan", {
 })).json();
 ok(badWrite && badWrite.ok === false && String(badWrite.error).includes("confirm"), "兼容模式下写接口仍要求 confirm:true");
 
+/* 新增：CSRF 与 method 校验（1.3.14 之后的加固） */
+const csrfState = await (await fetch(legacyBase + "/dsh-app-updater/state.json")).json();
+ok(typeof csrfState.csrfToken === "string" && csrfState.csrfToken.length >= 16, "state.json 下发 csrfToken");
+const noCsrf = await (await fetch(legacyBase + "/dsh-app-updater/scan", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ confirm: true }),
+})).json();
+ok(noCsrf && noCsrf.ok === false && /CSRF/.test(String(noCsrf.error)), "写接口缺少 csrfToken → 403");
+const withCsrf = await (await fetch(legacyBase + "/dsh-app-updater/scan", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ confirm: true, csrfToken: csrfState.csrfToken, force: true }),
+})).json();
+ok(withCsrf && withCsrf.ok === true, "带正确 csrfToken 的写请求被接受", withCsrf);
+const wrongMethod = await (await fetch(legacyBase + "/dsh-app-updater/scan", { method: "GET" })).json();
+ok(wrongMethod && wrongMethod.ok === false && /方法不允许/.test(String(wrongMethod.error)), "写接口用 GET → 405");
+
 legacy.server.close();
 
 /* ------------------------------------------------------------------ */

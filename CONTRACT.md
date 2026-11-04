@@ -15,6 +15,10 @@ dsh-app-updater/
 │  ├─ winget.js          # winget 定位、调用、表格解析
 │  ├─ registry.js        # 注册表 Uninstall 键枚举（覆盖 winget 未收录的应用）
 │  ├─ version.js         # 版本比较（Windows 风格 1.2.3.4 + 字母后缀）
+│  ├─ elevate.js         # Windows UAC 提权执行（临时文件 IPC + 进程树取消）
+│  ├─ proc.js            # 子进程底座（UTF-8 / 超时 / AbortSignal / shell:false）
+│  ├─ macos.js           # macOS 数据层：.app 枚举 / cask 目录竞速 / 列表组装
+│  ├─ appcast.js         # 非 Homebrew 应用官网更新源（Sparkle / Electron，只读）
 │  ├─ state.js           # 持久化状态（~/.dsh/dsh-app-updater/state.json）
 │  └─ client.js          # 浏览器半身：设置页 UI
 └─ README.md
@@ -66,7 +70,9 @@ dsh-app-updater/
   "update": { "running": false, "total": 0, "done": 0, "current": null, "error": null },
   "apps": { "scannedAt": 0, "stats": { "total": 0, "upgradable": 0, "unsupported": 0 }, "items": [], "engine": "winget" },
   "log": [ { "at": 0, "level": "info|warn|error|success", "text": "..." } ],
-  "settings": { "includeStoreApps": true, "includeRegistryOnly": true, "downloadDir": "", "keepInstallers": true, "hashFallbackUpgrade": true, "dryRun": false, "matchSystemArch": true, "autoElevate": true },
+  "settings": { "includeStoreApps": true, "includeRegistryOnly": true, "includeUnmanagedApps": true, "checkOfficialSources": true, "downloadDir": "", "keepInstallers": true, "useWingetDownload": true, "hashFallbackUpgrade": true, "dryRun": false, "matchSystemArch": true, "autoElevate": true, "useSelfUpdater": true },
+  // 写接口必须带回的 CSRF token（进程内生成、不落盘）；saveError 为最近一次写盘失败原因
+  "csrfToken": "<hex>", "saveError": null,
   // 准入现状，供界面与复核确认当前走哪条路径（默认 "deny" 不会出现在能读到响应的地方）
   "admission": { "mode": "connection|connection+loopback-legacy|loopback-legacy-optin|deny", "service": true, "allowLegacyLoopback": false, "warning": null }
 }
@@ -105,7 +111,8 @@ body `{ "confirm": true, "force": true }` → `{ "ok": true, "started": true }`�
 
 ### POST /dsh-app-updater/update
 
-body `{ "confirm": true, "ids": ["Google.Chrome", "..."], "mode": "silent" }`
+body `{ "confirm": true, "csrfToken": "<来自 state.json>", "ids": ["Google.Chrome", "..."] }`
+（`mode` 为历史残留字段，宿主不读取；所有写接口一律额外要求 `csrfToken`，见「写操作闸门」。）
 → `{ "ok": true, "started": true, "queued": 3 }`
 （串行执行，逐条：下载官网全量包 → 校验哈希 → 静默安装（需要管理员时自动提权）→ 复核版本。
 Edge 由 `MicrosoftEdgeUpdate.exe /ua` 处理。`settings.dryRun` 时只下载、不安装、不复核。）
@@ -129,11 +136,18 @@ Edge 由 `MicrosoftEdgeUpdate.exe /ua` 处理。`settings.dryRun` 时只下载�
 
 ### POST /dsh-app-updater/cancel
 
-→ `{ "ok": true }`（取消尚未开始的项目；提权副本是独立进程，取消只会停掉启动器，已经开始的那次安装会自己跑完）
+body `{ "confirm": true, "csrfToken": "<...>", "target": "scan|update|all" }`（`target` 默认 `"all"`，兼容旧行为）
+→ `{ "ok": true, "cancelled": true, "target": "all" }`
+
+> 旧文档写「提权副本是独立进程，取消只会停掉启动器，已经开始的安装会自己跑完」——
+> 这是 1.3.5 之前的行为。当前 `lib/elevate.js` 用 `cancel.flag` + 助手脚本 `taskkill /T /F`
+> **杀掉整棵提权进程树**；`lib/proc.js` 在 POSIX 上按进程组 kill。取消仍只能停掉「尚未完成」
+> 的那一次，已经提交给安装器的动作无法回滚。
 
 ### POST /dsh-app-updater/settings
 
-body `{ "confirm": true, "settings": { ... } }` → `{ "ok": true, "settings": {...} }`
+body `{ "confirm": true, "csrfToken": "<...>", "settings": { ... } }` → `{ "ok": true, "settings": {...} }`
+（`downloadDir` 接受 Windows 盘符 / UNC **或 macOS 以 `/` 开头的 POSIX 绝对路径**。）
 
 ### POST /dsh-app-updater/open-downloads
 
@@ -145,6 +159,11 @@ body `{ "confirm": true, "settings": { ... } }` → `{ "ok": true, "settings": {
 - `exports.inject = ["slots", "locale"]`
 - 注册 `settings.section`：`{ name: "settings.section", id: "dsh-app-updater", order: 42, label: () => "应用更新" }`
 - 只用 `require("react")`；不引入其它运行时依赖
-- 页面：顶部工具条（刷新检测 / 全部更新 / 取消 / 打开下载目录）+ 统计条 + 可筛选可多选的表格 + 底部日志
-- 表格列：勾选 / 应用名 / 已装版本 / 可升级到 / 来源 / 状态 / 操作
-- 所有请求带 `cache: "no-store"`；轮询 state.json（扫描/更新中 800ms，空闲 4s）
+- 页面：顶部工具条（刷新检测 / 全部更新 / 取消 / 打开下载目录）+ 统计条 + 可筛选可多选的表格 + 更新结果面板 + 底部日志
+- 表格列：勾选 / 应用名 / 已装版本 / 可升级到 / 状态 / 操作（「来源」是状态单元格里的徽章，不是独立列）
+- 所有请求带 `cache: "no-store"`；轮询 state.json（扫描/更新中 **900ms**，空闲 **5000ms**）
+  （旧文档写 800ms/4s，与 `lib/client.js:20-21` 不符）
+- **写操作闸门**：宿主对写路由显式校验 `method === "POST"`（否则 405），并在 `confirm:true`
+  之外要求 `csrfToken`（由 `GET /state.json` 下发、不落盘，兼容模式下尤其重要）
+- 结果面板渲染 `installOk` / `verified` / `hash` / `durationMs` / `selfUpdater` / `dryRun` /
+  `unverifiable`；`unverifiable`（读不到已装版本）单列为「已安装·未复核」状态

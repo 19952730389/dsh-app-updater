@@ -47,8 +47,8 @@ test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" && echo "OK：可�
 ## 2. 本地自测
 
 ```bash
-npm test                       # unit 36 项 + render 32 项
-node test/harness.mjs --scan   # 宿主半身跑真实 HTTP（需要 Windows + winget）
+npm test                       # unit + render + deny 必须全绿（项数以实际输出为准）
+node test/harness.mjs --scan   # 宿主半身跑真实 HTTP（非计分工具；需要 Windows + winget）
 ```
 
 ## 3. 发布到 npm
@@ -73,6 +73,12 @@ npm pack --silent                       # 产出 dsh-app-updater-<version>.tgz
 mv dsh-app-updater-*.tgz dsh-app-updater.tgz   # 资产名不要带版本号
 gh release create v<version> dsh-app-updater.tgz \
   --title "v<version>" --notes-file <(sed -n '/^## \[<version>\]/,/^## \[/p' CHANGELOG.md)
+
+# 发布后断言：资产名必须恰好是 dsh-app-updater.tgz（latest/download 按字面取文件名）。
+# 漏做 `mv` 或带上版本号，所有市场链接要到「下一次发版」才暴露 404 —— 这里提前拦住。
+gh release view v<version> --json assets --jq '.assets[].name' \
+  | grep -qx 'dsh-app-updater.tgz' \
+  && echo "✓ 资产名正确" || { echo "✗ 资产名不是 dsh-app-updater.tgz"; exit 1; }
 ```
 
 资产名必须**不带版本号**：README 与各插件市场用的是
@@ -89,7 +95,12 @@ git fetch origin && test "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)
   && echo "✓ HEAD 已在远端" || echo "✗ 先 git push"
 
 # ② 三套测试必须全绿
-node test/unit.mjs && node test/render.mjs && node test/deny.mjs
+npm test
+
+# ③ 资产名断言（防止人肉 mv 漏做）
+#    gh release view ... | grep -qx 'dsh-app-updater.tgz'（见上文）
+
+# ④ 改名 / 回退后核对各市场 sourceUrl 仍指向当前仓库（1.3.6 / 1.3.7 的教训）
 
 # ③ 版本一致：package.json / CHANGELOG 顶部 / 即将打的 tag
 grep '"version"' package.json

@@ -224,14 +224,31 @@ Then add `dsh-app-updater` to `dsh.profile.bundles` in the profile's `package.js
 2. Delete `<profile>/node_modules/dsh-app-updater`.
 3. Restart DSH; the data directory `%USERPROFILE%\.dsh\dsh-app-updater` can be removed as well.
 
+## 1.3.15 hardening (vs. 1.3.14)
+
+- Host half now explicitly validates `method === "POST"` on write routes (405 otherwise) and
+  requires a process-local `csrfToken` (delivered by `GET /state.json`, never persisted) in
+  addition to `confirm:true`.
+- Downloads are pre-fetched concurrently into private working directories (no shared-directory
+  diff race); a 4 GiB quota only removes files carrying the plugin's `.dsh-app-updater` sidecar.
+- Post-install verification uses immediate-first + exponential backoff + a total time limit;
+  `unverifiable` is now an explicit result state. Uninstall aborts background tasks.
+- Version parsing follows SemVer `+build`, is case-insensitive on suffixes, and no longer
+  collides in `normalizeVersionKey`. `StringDecoder` and POSIX process-group cancellation were
+  added to the process layer.
+- See `CHANGELOG.md` for the full list and `CONTRACT.md` for the current HTTP contract.
+
 ## Tests
 
 ```bash
-node test/unit.mjs     # 153 checks: table parsing, version compare, manifest & switches, OS/arch detection, Homebrew parsing, macOS app enumeration & cask matching
-node test/render.mjs   # 51 checks: settings panel (per platform), rehearsal banner, scan-warning banner, column drag, request bodies
-node test/deny.mjs     # 12 checks: deny-by-default per route when the host has no connection service
-node test/harness.mjs --scan   # boots the host half against a fake cordis ctx + real HTTP
+npm test                       # = unit + render + deny; the live output is authoritative for check counts
+node test/unit.mjs              # table parsing, version compare, manifest & switches, OS/arch detection, Homebrew parsing, macOS enumeration, admission gate
+node test/render.mjs            # settings panel (per platform), banners, column drag, request bodies, result panel
+node test/deny.mjs              # deny-by-default per route + CSRF / method gates
+node test/harness.mjs --scan    # boots the host half against a fake cordis ctx + real HTTP (print-only, not a scored test)
 ```
+
+> Historic check counts in older docs (e.g. `153 / 51 / 12`) are stale — **always trust `npm test` output**.
 
 > The tests do not depend on whether Homebrew is installed locally: the `findBrew` assertion checks
 > existence across the three default prefixes (Apple Silicon / Intel / Linuxbrew), so it stays green

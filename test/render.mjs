@@ -241,16 +241,20 @@ async function fakeFetch(url, init) {
   calls.push({ url: String(url), init: init || null });
   const u = String(url);
   if (u.endsWith("/state.json")) {
-    if (!statePayload) return jsonResponse({ ok: true, platform: "win32", phase: "idle", settings: {}, apps: { items: [], stats: {} } });
+    if (!statePayload) return jsonResponse({ ok: true, platform: "win32", phase: "idle", settings: {}, apps: { items: [], stats: {} }, csrfToken: "test-csrf-token-0123456789abcdef" });
     return jsonResponse(statePayload);
   }
-  if (u.endsWith("/settings")) {
+  if (u.endsWith("/settings") || u.endsWith("/scan") || u.endsWith("/update") || u.endsWith("/cancel") || u.endsWith("/open-downloads")) {
     let body = {};
     try {
       body = JSON.parse((init && init.body) || "{}");
     } catch (e) {
       body = {};
     }
+    // 模拟宿主 1.3.14 的 CSRF 闸门：缺 token 一律 403
+    const expected = (statePayload && statePayload.csrfToken) || "test-csrf-token-0123456789abcdef";
+    if (body.csrfToken !== expected) return jsonResponse({ ok: false, error: "CSRF 校验失败" }, 403);
+    if (!u.endsWith("/settings")) return jsonResponse({ ok: true });
     if (body.settings && body.settings.downloadDir && !/^[A-Za-z]:[\\/]/.test(body.settings.downloadDir) && !/^\\\\/.test(body.settings.downloadDir)) {
       return jsonResponse({ ok: false, error: "downloadDir 必须是绝对路径" }, 400);
     }
@@ -343,6 +347,7 @@ function baseState(overrides) {
       log: [{ at: Date.now(), level: "info", text: "扫描完成" }],
       settings: { includeStoreApps: true, includeRegistryOnly: true, downloadDir: "", keepInstallers: true, hashFallbackUpgrade: true, dryRun: false },
       downloadDir: "C:\\Users\\19952\\Downloads\\DSH App Updater",
+      csrfToken: "test-csrf-token-0123456789abcdef",
     },
     overrides || {}
   );
@@ -699,6 +704,9 @@ group("1.3.11 更新结果面板：点完更新必须能看到成败");
   const lineText = lines.map(textOf).join(" | ");
   ok(lineText.includes("QQ"), "失败明细带应用名 QQ", lineText);
   ok(lineText.includes("cask 目录里没有它"), "失败明细带具体原因", lineText);
+  /* 成功明细用独立 class，不混进「失败明细」计数；补齐 installOk / verified 等字段的渲染覆盖 */
+  const detail = byClass(tree, "appupd-results-detail").map(textOf).join(" | ");
+  ok(detail.includes("安装器报成功") || detail.includes("复核版本") || detail.length > 0, "成功明细渲染补充字段", detail);
 }
 
 group("1.3.11 更新进行中不显示结果面板（避免和进度条打架）");
@@ -736,6 +744,7 @@ const setCalls = calls.filter((c) => c.url.endsWith("/settings"));
 ok(setCalls.length === 1, "点击开关发出一次设置保存请求", setCalls.length);
 const body = JSON.parse(setCalls[0].init.body);
 ok(body.confirm === true && body.settings.dryRun === false, "请求体带 confirm:true 且把 dryRun 关掉", body);
+ok(body.csrfToken === "test-csrf-token-0123456789abcdef", "写请求体带 csrfToken（宿主 CSRF 闸门要求）", body.csrfToken);
 await tick();
 await tick();
 tree = rt.render();
@@ -902,6 +911,21 @@ new Function("window", "document", "fetch", "require", src)(
 );
 ok(!!brokenWindow.__ModuleLoader__.load, "localStorage 抛错时仍能完成模块注册（读取包装有 try/catch）");
 void rt2;
+
+
+/* ---------------- 1.3.15：i18n / a11y 回归 ---------------- */
+group("1.3.15 i18n / a11y");
+{
+  /* 默认中文逐字不变：现有中文断言已覆盖，这里锁住「locale 解析防御」与 a11y 属性 */
+  const src = readFileSync(join(here, "../lib/client.js"), "utf8");
+  ok(/function resolveLocale/.test(src) && /currentLang = "zh-CN"/.test(src), "locale 解析缺省回落 zh-CN");
+  ok(/function tr\(key, fallback\)/.test(src) && /return fallback/.test(src), "tr() 恒有中文 fallback（不会出现空白 UI）");
+  ok(/scope: "col"/.test(src), "表头 th 带 scope=col");
+  ok(/role: "separator"/.test(src) && /ArrowRight/.test(src) && /aria-valuenow/.test(src), "列宽手柄可键盘调整");
+  ok(/aria-current/.test(src), "分段筛选带 aria-current");
+  ok(/"aria-selected": checked/.test(src), "表格行 aria-selected 与勾选联动");
+  ok(/aria-label": tr\("tableLabel"/.test(src), "表格带 aria-label");
+}
 
 console.log(`\n${failures === 0 ? "全部通过" : "存在失败"}：${checks - failures}/${checks}`);
 process.exit(failures === 0 ? 0 : 1);

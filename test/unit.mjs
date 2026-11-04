@@ -18,9 +18,9 @@ import {
   displayWidth,
   sliceByWidth,
 } from "../lib/winget.js";
-import { compareVersions, isNewer, looksLikeVersion, splitVersion, compareTails } from "../lib/version.js";
+import { compareVersions, isNewer, looksLikeVersion, splitVersion, compareTails, normalizeVersionKey } from "../lib/version.js";
 import { parseInstallerManifest, splitSwitchArgs, defaultSilentArgs, resolveInstallArgs, parseBrewCaskVersions, parseBrewOutdated, findBrew, isArchNotFoundError, explainInstallerExitCode, evaluateUpdateResult, findEdgeUpdate, updateHintFor, pickInstallerSha256, verifyInstallerHash, sha256File } from "../lib/engine.js";
-import { psQuote, ELEVATION_CANCELLED } from "../lib/elevate.js";
+import { psQuote, ELEVATION_CANCELLED, isElevated } from "../lib/elevate.js";
 import {
   applicationDirs,
   parseCaskCatalog,
@@ -29,6 +29,7 @@ import {
   buildMacosItems,
   createCaskMatcher,
   splitCaskVersion,
+  mainVersionOf,
   isSameOrNewerThan,
 } from "../lib/macos.js";
 import {
@@ -725,7 +726,8 @@ group("1.3.8 非 Homebrew 应用：给出可执行的收编命令");
   ok(mystery && typeof mystery.adoptHint === "string" && mystery.adoptHint.includes("--force"), "对不上 cask 时给出占位提示", mystery && mystery.adoptHint);
   // 关键边界：没有 cask 就**不能**一键，否则会出现「勾得动、点下去必然失败」
   ok(mystery && mystery.hasUpdate === false && mystery.canAdopt === false, "对不上 cask 的应用不可一键更新", mystery && { hasUpdate: mystery.hasUpdate, canAdopt: mystery.canAdopt });
-  ok(mystery && mystery.reason === "not-managed", "对不上 cask 时仍是「非 Homebrew 管理」", mystery && mystery.reason);
+  // 1.3.14 修复后 reason 细分：对不上 cask 的标 not-in-catalog（更精确），不再是笼统的 not-managed
+  ok(mystery && mystery.reason === "not-in-catalog", "对不上 cask 时标注「目录未收录」而非笼统的 not-managed", mystery && mystery.reason);
 
   // 系统组件 / App Store 应用不该被建议去 brew 收编
   const sysAndStore = buildMacosItems({
@@ -1239,6 +1241,11 @@ group("1.3.13 cask 版本串含构建号：不得把「已是最新」误报成�
   ok(splitCaskVersion("2.189.0.55910").short === "2.189.0", "主版本保留 2.189.0");
   ok(splitCaskVersion("1.5.0").build === "", "1.5.0 这种语义版本不会把末段 0 当构建号");
   ok(splitCaskVersion("5.9.3.42398134-d4692421").build === "42398134", "带哈希尾巴的构建号也能拆出");
+  /* 本轮踩过的坑：若让 splitCaskVersion 复用「砍 _/+ 后缀」的 mainVersionOf，
+     QQ 的 7.0.0_260812_01 会被砍成 7.0.0、build 变空，破坏 1.3.13 的判据。
+     扫描侧必须保留原始串，只取逗号前主段。 */
+  ok(splitCaskVersion("7.0.0_260812_01,9.9.33,126b7ce6").short === "7.0.0_260812_01", "下划线构建段不被 mainVersionOf 误砍（扫描侧保留原始串）");
+  ok(typeof mainVersionOf === "function" && mainVersionOf("7.0.0_260812_01,9.9.33") === "7.0.0", "mainVersionOf 供 engine 复核侧取可比较主段");
 
   // buildMacosItems 全链路：8 个误报里最典型的微信必须判为已最新
   const cat = parseCaskCatalog([{ token: "wechat", version: "4.2.0.16,270352", name: ["WeChat"], artifacts: [{ app: ["WeChat.app"] }] }]);
@@ -1274,6 +1281,125 @@ group("1.3.14 下载源可达性探测（不要陪跑两小时）");
   // 探测失败必须跳过并给出可操作原因，不能让 brew 卡两小时
   ok(/if \(!probe\.ok\)/.test(src), "探测失败时跳过该应用");
   ok(/配代理/.test(fn), "给出「配代理」这个具体下一步");
+}
+
+
+/* ---------------- 本轮修复回归（Lead：宿主半身 + 底层库） ---------------- */
+group("版本算法：SemVer +build / 大小写 / 归一化碰撞 / 前缀");
+{
+  ok(compareVersions("1.2.3+build5", "1.2.3") === 0, "+build 是构建元数据，与正式版相等（原实现误判为预发布）");
+  ok(compareVersions("1.0.0-rc1", "1.0.0-RC1") === 0, "预发布尾缀大小写不敏感");
+  ok(normalizeVersionKey("1.2-3") !== normalizeVersionKey("1.23"), "归一化不再把 1.2-3 与 1.23 撞成同一个键");
+  ok(splitVersion("verbose1.2") === null, "非版本号的 verbose1.2 不再被剥成无法解析的串");
+  ok(splitVersion("Version: 1.2.3") && splitVersion("Version: 1.2.3").nums.join(".") === "1.2.3", "Version: 前缀仍可解析");
+  ok(compareTails("build10", "build9") === 1 && compareTails("rc9", "rc10") === -1, "compareTails 连续调用不共享 lastIndex");
+}
+
+group("状态：CSRF token 不落盘 / 损坏备份 / 写盘失败可观测");
+{
+  const s = new Store();
+  ok(typeof s.csrfToken === "string" && s.csrfToken.length >= 32, "Store 生成进程内 csrfToken");
+  ok(!("csrfToken" in s.state), "csrfToken 不在 state 里（不会落盘）");
+  ok(s.lastSaveError === null, "初始没有写盘错误");
+  s.loaded = true;
+  s.save = () => {};
+  const forcePrune = s.pruneForeignSettings();
+  ok(typeof forcePrune === "boolean", "pruneForeignSettings 仍可用（已接入 load 之外的下发前裁剪）");
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/state.js"), "utf8");
+  ok(/state\.json\.corrupt-/.test(src), "损坏的 state.json 会先备份再回退默认值");
+  const idxSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/index.js"), "utf8");
+  ok(/csrfToken !== store\.csrfToken/.test(idxSrc), "宿主写闸门校验 csrfToken");
+  ok(/settingAppliesTo\(key, env\.family\)/.test(idxSrc), "下发 state 前再裁一次平台专属设置");
+}
+
+group("宿主半身：method / cancel target / downloadDir / 卸载");
+{
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/index.js"), "utf8");
+  ok(/expectedMethod/.test(src) && /405/.test(src), "路由显式校验 HTTP method，不匹配返回 405");
+  ok(/const target = String\(body\.target \|\| "all"\)/.test(src), "/cancel 支持 scan / update / all 拆分");
+  ok(/looksPosixAbs/.test(src), "/settings 的 downloadDir 接受 macOS POSIX 绝对路径");
+  ok(/clearTimeout\(control\.rescanTimer\)/.test(src), "卸载时清掉自动重扫 timer");
+  ok(/control\[key\]\.abort\(\)/.test(src), "卸载时 abort 后台 scan/update 任务");
+  ok(/const owns = control\.updateAbort === abort/.test(src), "startUpdate 增加任务所有权校验");
+  ok(/连接准入服务异常，按默认拒绝处理/.test(src), "admit() 异常时不再把内部错误文案回给客户端");
+}
+
+group("底层库：StringDecoder / 进程组取消 / 架构依据可观测");
+{
+  const procSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/proc.js"), "utf8");
+  ok(/StringDecoder/.test(procSrc), "proc.js 用 StringDecoder 逐块解码（防中文跨 chunk 变 U+FFFD）");
+  ok(/process\.kill\(-child\.pid/.test(procSrc), "proc.js 在 POSIX 上按进程组取消（不留孤儿安装器）");
+  const regSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/registry.js"), "utf8");
+  ok(/StringDecoder/.test(regSrc), "registry.js 同样用 StringDecoder");
+  const platSrc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/platform.js"), "utf8");
+  ok(/archSource/.test(platSrc), "platform.js 暴露架构判定依据供排障");
+  ok(typeof isElevated === "function", "isElevated 仍导出（非 Windows 语义已收紧）");
+
+group("下载目录配额：只删本插件产出的文件（防误删用户安装包）");
+{
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  ok(/OWNED_SIDECAR/.test(src), "磁盘配额靠 .dsh-app-updater 侧车标记识别本插件文件");
+  const prune = src.slice(src.indexOf("async function pruneDownloadDir"), src.indexOf("async function downloadInstaller"));
+  ok(/existsSync\(sidecar\)/.test(prune) && /!existsSync\(sidecar\)\s*\)\s*continue/.test(prune), "没有侧车标记的文件一律跳过，绝不按扩展名误删");
+}
+}
+
+
+/* ---------------- 1.3.15 回归：前缀变体 / 版本边界 / 子进程 / 宿主不变量 ---------------- */
+group("1.3.15：isStoreId 前缀依赖与定宽表解析");
+{
+  /* isStoreId 未导出，只能锁源码 + 验证解析器把带反斜杠的商店 Id 原样带出来。
+     winget 若改用别的前缀（或 ARP\Machine\… 合成 Id），这条源码断言会提醒维护者。 */
+  const src = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/engine.js"), "utf8");
+  ok(/function isStoreId\(id\)/.test(src), "isStoreId 仍是独立的商店 Id 判据");
+  ok(/\/\^\(MSIX\|MSSTORE\)\\\\\/i/.test(src) || /MSIX\|MSSTORE/.test(src), "商店前缀仍为 MSIX\\ / MSSTORE\\（前缀变体需补测）");
+
+  /* 用真实 fixture 验证：自造定宽表容易被 parseHeaderColumns 的 CJK 宽度切碎，
+     这里直接用仓库里 131 行的真实 winget list 输出。 */
+  const fixture = readFileSync(join(here, "fixture-winget-list.txt"), "utf8");
+  const ids = parseInstalledList(fixture).map((r) => r.id);
+  const isStorePrefix = (x) => /^(MSIX|MSSTORE)\\/i.test(x);
+  ok(ids.filter(isStorePrefix).length > 0, "真实 fixture 里 MSIX\\ 商店 Id 能被解析出来", ids.filter(isStorePrefix).length);
+  ok(ids.filter((x) => /^ARP\\/i.test(x)).length > 0, "ARP\\ 合成 Id 也能完整解析（不被切碎）", ids.filter((x) => /^ARP\\/i.test(x)).length);
+  /* 已知前缀依赖风险：isStoreId 只认 MSIX\ / MSSTORE\，ARP\ 合成 Id 会被当普通
+     winget 条目。这条断言把「ARP\ 不被商店正则命中」这一事实锁住，未来 winget 改前缀
+     或打算把它们归入商店管理时，维护者会看到它并复核判定逻辑。 */
+  ok(ids.filter((x) => /^ARP\\/i.test(x)).every((x) => !isStorePrefix(x)), "ARP\\ 合成 Id 当前不被判为商店条目（前缀依赖风险点，改动需复核）");
+  ok(fixture.split("\n")[0].trim().startsWith("Name"), "fixture 仍是英文表头（结构判据可识别）");
+}
+
+group("1.3.15：版本算法边界（本轮修复的回归锁）");
+{
+  ok(compareVersions("1.2.3+build5", "1.2.3") === 0, "SemVer +build 元数据与正式版相等");
+  ok(compareVersions("1.0.0-rc1", "1.0.0-RC1") === 0, "预发布尾缀大小写不敏感");
+  ok(normalizeVersionKey("1.2-3") !== normalizeVersionKey("1.23"), "normalizeVersionKey 不再碰撞");
+  ok(splitVersion("verbose1.2") === null, "v 前缀只剥「v 紧跟数字」");
+  ok(compareTails("build10", "build9") === compareTails("build10", "build9"), "compareTails 连续调用结果一致（无共享 lastIndex）");
+  ok(!looksLikeVersion("Unknown"), "Unknown 仍不算版本");
+}
+
+group("1.3.15：子进程封装不变量（源码断言）");
+{
+  const proc = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/proc.js"), "utf8");
+  ok(/StringDecoder/.test(proc), "proc.js 用 StringDecoder 逐块解码");
+  ok(/process\.kill\(-child\.pid/.test(proc), "proc.js 在 POSIX 按进程组取消");
+  const reg = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/registry.js"), "utf8");
+  ok(/StringDecoder/.test(reg), "registry.js 同样用 StringDecoder");
+  const state = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/state.js"), "utf8");
+  ok(/csrfToken/.test(state), "state.js 生成进程内 csrfToken（不落盘）");
+  ok(/state\.json\.corrupt-/.test(state), "损坏的 state.json 先备份再回退");
+}
+
+group("1.3.15：宿主半身不变量（源码断言，防以后被回退）");
+{
+  const idx = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../lib/index.js"), "utf8");
+  ok(/WRITE_ROUTES/.test(idx) && /expectedMethod/.test(idx) && /405/.test(idx), "写路由显式 method 校验 + 405");
+  ok(/csrfToken !== store\.csrfToken/.test(idx), "写闸门校验 csrfToken");
+  ok(/clearTimeout\(control\.rescanTimer\)/.test(idx), "卸载清掉自动重扫 timer");
+  ok(/control\[key\]\.abort\(\)/.test(idx), "卸载 abort 后台任务");
+  ok(/settingAppliesTo\(key, env\.family\)/.test(idx), "下发 state 前再裁平台专属设置");
+  ok(/looksPosixAbs/.test(idx), "downloadDir 接受 macOS POSIX 绝对路径");
+  ok(/const target = String\(body\.target \|\| "all"\)/.test(idx), "/cancel 支持 target 拆分");
 }
 
 /* ---------------- 结果 ---------------- */

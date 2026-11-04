@@ -57,7 +57,10 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 const base = `http://127.0.0.1:${server.address().port}`;
 
 const get = async (p) => (await fetch(base + p)).json();
-const post = async (p, body) => (await fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) })).json();
+/* 写接口现在要求 CSRF token（由 GET /state.json 下发、不落盘）。夹具先取一次再带上，
+   与浏览器半身的行为一致。 */
+let csrfToken = "";
+const post = async (p, body) => (await fetch(base + p, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...(body || {}), csrfToken }) })).json();
 
 function head(title) {
   console.log(`\n=== ${title} ===`);
@@ -71,13 +74,20 @@ console.log(await get("/dsh-app-updater/health.json"));
 
 head("state (before scan)");
 const s0 = await get("/dsh-app-updater/state.json");
-console.log({ phase: s0.phase, winget: s0.winget, items: s0.apps.items.length, downloadDir: s0.downloadDir });
+csrfToken = s0.csrfToken || "";
+console.log({ phase: s0.phase, winget: s0.winget, items: s0.apps.items.length, downloadDir: s0.downloadDir, csrfToken: csrfToken ? "已获取" : "缺失" });
 
 head("write gate: missing confirm");
 console.log(await post("/dsh-app-updater/scan", {}));
 
 head("write gate: bad json");
 console.log(await (await fetch(base + "/dsh-app-updater/scan", { method: "POST", body: "{oops" })).json());
+
+head("write gate: 缺少 csrfToken");
+console.log(await (await fetch(base + "/dsh-app-updater/scan", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ confirm: true }) })).json());
+
+head("method 校验：写接口不接受 GET");
+console.log(await (await fetch(base + "/dsh-app-updater/scan", { method: "GET" })).json());
 
 if (process.argv.includes("--scan")) {
   head("scan");
