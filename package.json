@@ -26,11 +26,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/19952730389/dsh-app-updater.git"
+    "url": "git+https://github.com/ccgo26/dsh-app-updater.git"
   },
-  "homepage": "https://github.com/19952730389/dsh-app-updater",
+  "homepage": "https://github.com/ccgo26/dsh-app-updater",
   "bugs": {
-    "url": "https://github.com/19952730389/dsh-app-updater/issues"
+    "url": "https://github.com/ccgo26/dsh-app-updater/issues"
   },
   "engines": {
     "node": "^22.19.0 || >=24.0.0",
@@ -64,5 +64,5 @@
     "installer",
     "silent-install"
   ],
-  "author": "19952730389"
+  "author": "ccgo26"
 }

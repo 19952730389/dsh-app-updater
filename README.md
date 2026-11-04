@@ -20,10 +20,10 @@ dsh plugin --profile web add dsh-app-updater
 
 ```bash
 # 源码仓库
-dsh plugin --profile web add github:19952730389/dsh-app-updater
+dsh plugin --profile web add github:ccgo26/dsh-app-updater
 
 # 预构建 tgz（见 Releases）
-dsh plugin --profile web add https://github.com/19952730389/dsh-app-updater/releases/latest/download/dsh-app-updater.tgz
+dsh plugin --profile web add https://github.com/ccgo26/dsh-app-updater/releases/latest/download/dsh-app-updater.tgz
 ```
 
 装好后重启 DSH，在 **设置 → 应用更新** 使用。桌面端（Electron 托管的 `desktop` profile）不允许
